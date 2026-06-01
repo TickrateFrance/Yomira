@@ -23,4 +23,4 @@ Yomira is designed to collect as little as possible.
 Deleting your account removes its synced data. Uninstalling the app removes all
 local data.
 
-Questions: thibaultpernel@gmail.com
+Questions: support@yomira.eu
