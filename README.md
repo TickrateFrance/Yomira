@@ -140,11 +140,16 @@ you run and configure.
 
 ## Disclaimer
 
-The Yomira **software hosts and bundles no content** — it is a reader for sources
-configured by whoever runs an instance. Any copyright concern about content served
-by a specific instance must be directed to **that instance's operator and the
-original source**, who control what is fetched and served. Please support official
-releases where available.
+Yomira is a **simple Suwayomi client for Android and Windows** — nothing more. The
+**software hosts and bundles no content, no sources, and no copyrighted material**;
+it only displays whatever a Suwayomi-Server the user runs and configures provides.
+
+The author of Yomira "Pralexio & https://tickrate.fr/ " **is not responsible for the use people make
+of this app**, nor for any content accessed, served, or configured by its users.
+Each user is solely responsible for the servers they run, the sources they
+configure, and how they use the software. Any copyright concern about content served
+by a given instance must be directed to **that instance's operator and the original
+source**. Please support official releases where available.
 
 ## Credits & license
 
