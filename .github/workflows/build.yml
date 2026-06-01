@@ -1,0 +1,51 @@
+name: Build APK
+
+# Builds the release APK from source on every version tag (and on demand), so
+# anyone can see the app is built straight from this public code.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter --version
+
+      # Regenerate native scaffolding that isn't committed (no overwrite of lib/).
+      - run: flutter create . --platforms=android --org fr.tickrate
+
+      # Real .env is never committed — build with the placeholder example.
+      - run: cp .env.example .env
+
+      - run: flutter pub get
+
+      # Isar codegen (*.g.dart is gitignored).
+      - run: dart run build_runner build --delete-conflicting-outputs
+
+      - run: flutter build apk --release
+
+      - name: Checksum
+        run: sha256sum build/app/outputs/flutter-apk/app-release.apk | tee SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yomira-apk
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            SHA256SUMS.txt

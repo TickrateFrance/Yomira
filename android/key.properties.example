@@ -1,0 +1,6 @@
+# Copy to android/key.properties and fill in to sign release APKs.
+# NEVER commit key.properties or your .jks keystore.
+storePassword=your-store-password
+keyPassword=your-key-password
+keyAlias=tappreader
+storeFile=/absolute/path/to/tappreader-release.jks

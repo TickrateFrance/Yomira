@@ -1,0 +1,39 @@
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = "../build"
+
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+
+    // AGP 8 requires every Android module to declare a namespace. Some older
+    // plugins (e.g. isar_flutter_libs 3.1.0) only set `package` in their
+    // manifest and have no namespace, which breaks the build. Backfill it from
+    // the plugin's group. Registered here BEFORE evaluationDependsOn below so
+    // the callback exists when modules get evaluated.
+    afterEvaluate { project ->
+        if (project.hasProperty("android")) {
+            project.android {
+                if (namespace == null) {
+                    namespace project.group.toString()
+                }
+                // Some old plugins (e.g. isar_flutter_libs) compile against an
+                // SDK that lacks android:attr/lStar (API 31+), which breaks the
+                // release resource verification. Force a modern compileSdk.
+                compileSdkVersion 36
+            }
+        }
+    }
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}

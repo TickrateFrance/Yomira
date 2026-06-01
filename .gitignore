@@ -1,0 +1,35 @@
+# Flutter/Dart
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+
+# Android
+android/local.properties
+android/key.properties
+android/.gradle/
+*.jks
+*.keystore
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Generated (isar codegen) — regenerate with build_runner
+*.g.dart
+
+# MSIX signing private key (never commit)
+yomira_cert.pfx
+
+# Runtime secrets bundled at build time — NEVER commit (copy from .env.example).
+# Holds the Suwayomi password, backend URL, Discord app id.
+.env
+.env.local
+
+# Build artifacts / signing certs — distribute via GitHub Releases, not source.
+installer/
+*.cer
+*.msix

@@ -1,0 +1,102 @@
+name: tappreader
+description: Private manga/manhwa reader using the MangaDex public API. No GMS/Firebase.
+publish_to: "none"
+version: 1.2.5+5
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.1
+
+  # HTTP
+  dio: ^5.7.0
+
+  # Image display + disk cache (no GMS)
+  cached_network_image: ^3.4.1
+  # Direct access to the shared disk cache for chapter prefetching
+  flutter_cache_manager: ^3.4.1
+
+  # Local DB
+  isar: ^3.1.0+1
+  isar_flutter_libs: ^3.1.0+1
+
+  # Filesystem (downloads)
+  path_provider: ^2.1.4
+  path: ^1.9.0
+
+  # Secure storage for JWT (uses Android Keystore, no GMS)
+  flutter_secure_storage: ^9.2.2
+
+  # Routing
+  go_router: ^14.2.7
+
+  # Runtime config from a bundled .env file (no GMS)
+  flutter_dotenv: ^5.1.0
+
+  # Discord Rich Presence — pure-Dart IPC (Windows named pipe via win32 FFI,
+  # Unix socket on Linux/macOS). No native build step.
+  win32: ^5.5.0
+  ffi: ^2.1.0
+
+  # Misc
+  collection: ^1.18.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  # Isar codegen
+  isar_generator: ^3.1.0+1
+  build_runner: ^2.4.13
+  # App icon generation (Android + iOS + Windows) from one source image
+  flutter_launcher_icons: ^0.14.1
+  # Windows .msix installer packaging
+  msix: ^3.16.8
+
+# Windows installer config. Build:  flutter build windows --release
+# then:  dart run msix:create
+msix_config:
+  display_name: Yomira
+  publisher_display_name: Tickrate
+  identity_name: fr.tickrate.yomira
+  msix_version: 1.0.0.0
+  logo_path: assets\icon\app_icon.png
+  capabilities: internetClient
+  publisher: CN=Tickrate
+  # Self-signed code-signing cert (created via New-SelfSignedCertificate).
+  # Ship yomira_cert.cer alongside the .msix so users can trust it.
+  certificate_path: yomira_cert.pfx
+  certificate_password: yomira
+  install_certificate: false
+
+# Run after adding your image:  dart run flutter_launcher_icons
+# Only ONE file required: assets/icon/app_icon.png  (PNG, square, ideally 1024x1024)
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: true
+  # No iOS project generated yet (Android + Windows only). Enable after running
+  # `flutter create . --platforms=ios` if you ever target iOS.
+  ios: false
+  # Android adaptive icon. Reuses the same image as the foreground so a single
+  # PNG works. For a cleaner adaptive icon, replace adaptive_icon_foreground with
+  # a transparent, ~25%-padded version (e.g. app_icon_foreground.png).
+  adaptive_icon_background: "#0E0E12"
+  adaptive_icon_foreground: "assets/icon/app_icon.png"
+  remove_alpha_ios: true
+  windows:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    icon_size: 256
+
+flutter:
+  uses-material-design: true
+  # Bundle the .env so flutter_dotenv can read it at runtime.
+  assets:
+    - .env
+    - assets/icon/app_icon.png
