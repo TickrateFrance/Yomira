@@ -9,7 +9,6 @@
 Read across hundreds of community sources in English and French, with
 cross-device reading-progress sync. No ads. No tracking. No Google services.
 
-[![Build APK](https://github.com/TickrateFrance/Yomira/actions/workflows/build.yml/badge.svg)](https://github.com/TickrateFrance/Yomira/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-FF8FB1.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Windows-C4A7E7.svg)](#download)
 
