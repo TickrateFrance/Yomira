@@ -9,8 +9,7 @@
 Read across hundreds of community sources in English and French, with
 cross-device reading-progress sync. No ads. No tracking. No Google services.
 
-<!-- Replace OWNER/REPO with your GitHub path -->
-[![Build APK](https://github.com/OWNER/REPO/actions/workflows/build.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/build.yml)
+[![Build APK](https://github.com/TickrateFrance/Yomira/actions/workflows/build.yml/badge.svg)](https://github.com/TickrateFrance/Yomira/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-FF8FB1.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Windows-C4A7E7.svg)](#download)
 
@@ -27,7 +26,7 @@ cross-device reading-progress sync. No ads. No tracking. No Google services.
 ## Download
 
 Get the latest build from **[yomira.eu](https://yomira.eu)** or the
-[**Releases**](https://github.com/OWNER/REPO/releases) page:
+[**Releases**](https://github.com/TickrateFrance/Yomira/releases) page:
 
 - **Android** — `Yomira-latest.apk` (Android 8.0+). Sideload it; you'll be asked
   to allow "install from this source" — expected for an app outside the Play Store.
@@ -77,8 +76,8 @@ Want to verify the app or build it yourself? You only need the Flutter SDK.
 
 ```bash
 # 1. Clone
-git clone https://github.com/OWNER/REPO.git
-cd REPO
+git clone https://github.com/TickrateFrance/Yomira.git
+cd Yomira
 
 # 2. Configure (the real .env is never committed)
 cp .env.example .env
