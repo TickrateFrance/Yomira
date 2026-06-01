@@ -1,7 +1,9 @@
-name: Build APK
+name: Build
 
-# Builds the release APK from source on every version tag (and on demand), so
-# anyone can see the app is built straight from this public code.
+# Builds the Android APK and the Windows installer from source, so anyone can
+# see the apps are built straight from this public code.
+#   - Runs on every version tag (v*).
+#   - Or run it manually: Actions tab -> Build -> "Run workflow".
 on:
   push:
     tags: ['v*']
@@ -11,41 +13,56 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  android:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-
       - run: flutter --version
-
       # Regenerate native scaffolding that isn't committed (no overwrite of lib/).
       - run: flutter create . --platforms=android --org fr.tickrate
-
       # Real .env is never committed — build with the placeholder example.
       - run: cp .env.example .env
-
       - run: flutter pub get
-
       # Isar codegen (*.g.dart is gitignored).
       - run: dart run build_runner build --delete-conflicting-outputs
-
       - run: flutter build apk --release
-
       - name: Checksum
         run: sha256sum build/app/outputs/flutter-apk/app-release.apk | tee SHA256SUMS.txt
-
       - uses: actions/upload-artifact@v4
         with:
-          name: yomira-apk
+          name: yomira-android
           path: |
             build/app/outputs/flutter-apk/app-release.apk
             SHA256SUMS.txt
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter --version
+      - run: flutter create . --platforms=windows --org fr.tickrate
+      - run: Copy-Item .env.example .env
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: flutter build windows --release
+      # Compile the .exe installer with Inno Setup.
+      - run: choco install innosetup -y --no-progress
+      - run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+      - name: Checksum
+        run: (Get-FileHash installer\Yomira-Setup.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii SHA256SUMS-windows.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yomira-windows
+          path: |
+            installer/Yomira-Setup.exe
+            SHA256SUMS-windows.txt
