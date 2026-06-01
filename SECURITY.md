@@ -5,7 +5,7 @@
 If you find a security issue in Yomira, please report it **privately** — do not
 open a public issue.
 
-- Email: **thibaultpernel@gmail.com** (subject: `Yomira security`)
+- Email: **support@yomira.eu** (subject: `Yomira security`)
 - Or use GitHub's *Report a vulnerability* (Security tab → Advisories).
 
 Please include steps to reproduce and the affected version. You'll get a
