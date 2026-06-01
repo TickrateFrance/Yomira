@@ -22,6 +22,7 @@ class DetailScreen extends ConsumerStatefulWidget {
 
 class _DetailScreenState extends ConsumerState<DetailScreen> {
   UManga? _manga;
+  double? _mdRating; // MangaDex 0–10 rating (canonical across sources)
   List<String> _languages = const [];
   String? _selectedLang;
   List<UChapter> _chapters = const [];
@@ -57,6 +58,11 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         _loadingHeader = false;
       });
       if (_selectedLang != null) _loadChapters(_selectedLang!);
+
+      // Canonical star rating from MangaDex (works for any source, by title).
+      ref.read(mangadexRatingsProvider).ratingFor(manga.title).then((r) {
+        if (mounted && r != null) setState(() => _mdRating = r);
+      });
     } catch (e) {
       setState(() {
         _error = describeBackendError(e);
@@ -252,10 +258,13 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
               _chip(Icons.cloud_outlined, m.displayLabel),
               _chip(Icons.info_outline, m.status),
               if (m.year != null) _chip(Icons.calendar_today, '${m.year}'),
-              if (m.rating != null) _chip(Icons.star, m.rating!.toStringAsFixed(2)),
               if (m.follows != null) _chip(Icons.people, '${m.follows} follows'),
             ],
           ),
+          if ((_mdRating ?? m.rating) != null) ...[
+            const SizedBox(height: 10),
+            _stars(_mdRating ?? m.rating!),
+          ],
           const SizedBox(height: 12),
           if (m.tags.isNotEmpty)
             Wrap(
@@ -280,6 +289,28 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
       avatar: Icon(icon, size: 16),
       label: Text(label),
       visualDensity: VisualDensity.compact,
+    );
+  }
+
+  /// 5-star row from a 0–10 rating (MangaDex scale), with the numeric value.
+  Widget _stars(double rating10) {
+    final scheme = Theme.of(context).colorScheme;
+    final outOf5 = (rating10 / 2).clamp(0.0, 5.0);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < 5; i++)
+          Icon(
+            outOf5 >= i + 1
+                ? Icons.star
+                : (outOf5 >= i + 0.5 ? Icons.star_half : Icons.star_border),
+            size: 20,
+            color: scheme.primary,
+          ),
+        const SizedBox(width: 8),
+        Text('${rating10.toStringAsFixed(2)} / 10',
+            style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13)),
+      ],
     );
   }
 

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app.dart';
+import 'core/background_settings.dart';
 import 'core/runtime_config.dart';
+import 'data/local/background_store.dart';
 import 'data/local/isar_db.dart';
 import 'data/local/reader_prefs_store.dart';
 import 'state/providers.dart';
@@ -25,6 +27,10 @@ Future<void> main() async {
   final readerPrefs = ReaderPrefsStore();
   final initialReaderSettings = await readerPrefs.load();
 
+  // Load persisted background customization (color / image).
+  final backgroundStore = BackgroundStore();
+  final initialBackground = await backgroundStore.load();
+
   runApp(
     ProviderScope(
       overrides: [
@@ -43,6 +49,10 @@ Future<void> main() async {
         readerPrefsStoreProvider.overrideWithValue(readerPrefs),
         readerSettingsProvider.overrideWith(
           (ref) => ReaderSettingsController(readerPrefs, initialReaderSettings),
+        ),
+        backgroundStoreProvider.overrideWithValue(backgroundStore),
+        backgroundProvider.overrideWith(
+          (ref) => BackgroundController(backgroundStore, initialBackground),
         ),
       ],
       child: const TAppReaderApp(),

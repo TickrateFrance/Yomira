@@ -426,9 +426,98 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                 ),
                 onPressed: () => ref.read(readerSettingsProvider.notifier).toggleMode(),
               ),
+              IconButton(
+                tooltip: 'Reader settings',
+                icon: const Icon(Icons.tune, color: Colors.white),
+                onPressed: _openReaderSettings,
+              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Live reader settings, adjustable without leaving the reader. Changes apply
+  /// instantly (the reader watches readerSettingsProvider and rebuilds).
+  void _openReaderSettings() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => Consumer(
+        builder: (ctx, ref, _) {
+          final s = ref.watch(readerSettingsProvider);
+          final ctrl = ref.read(readerSettingsProvider.notifier);
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Reader settings',
+                      style: Theme.of(ctx).textTheme.titleMedium),
+                  const SizedBox(height: 16),
+
+                  const Text('Mode'),
+                  const SizedBox(height: 6),
+                  SegmentedButton<ReaderMode>(
+                    segments: const [
+                      ButtonSegment(
+                          value: ReaderMode.verticalContinuous,
+                          icon: Icon(Icons.swap_vert),
+                          label: Text('Webtoon')),
+                      ButtonSegment(
+                          value: ReaderMode.horizontalPaged,
+                          icon: Icon(Icons.swap_horiz),
+                          label: Text('Paged')),
+                    ],
+                    selected: {s.mode},
+                    onSelectionChanged: (v) => ctrl.setMode(v.first),
+                  ),
+                  const SizedBox(height: 16),
+
+                  const Text('Image quality'),
+                  const SizedBox(height: 6),
+                  SegmentedButton<ReaderQuality>(
+                    segments: const [
+                      ButtonSegment(value: ReaderQuality.data, label: Text('High')),
+                      ButtonSegment(value: ReaderQuality.dataSaver, label: Text('Saver')),
+                    ],
+                    selected: {s.quality},
+                    onSelectionChanged: (v) => ctrl.setQuality(v.first),
+                  ),
+                  const SizedBox(height: 16),
+
+                  Row(
+                    children: [
+                      const Text('Page width'),
+                      const Spacer(),
+                      Text(
+                        s.pageWidth >= ReaderSettings.maxWidth
+                            ? 'Full'
+                            : '${s.pageWidth.round()} px',
+                        style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                  Slider(
+                    min: ReaderSettings.minWidth,
+                    max: ReaderSettings.maxWidth,
+                    divisions:
+                        ((ReaderSettings.maxWidth - ReaderSettings.minWidth) / 40).round(),
+                    value: s.pageWidth
+                        .clamp(ReaderSettings.minWidth, ReaderSettings.maxWidth),
+                    label: s.pageWidth >= ReaderSettings.maxWidth
+                        ? 'Full'
+                        : '${s.pageWidth.round()}',
+                    onChanged: ctrl.setPageWidth,
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

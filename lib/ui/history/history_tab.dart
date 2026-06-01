@@ -27,7 +27,8 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _future = _loadLocal(); // instant from cache
+    _sync(); // then refresh from backend + heal missing data in the background
     // Register for the desktop "R" refresh shortcut (History = tab index 2).
     ref.read(tabRefreshProvider).register(2, _refresh);
   }
@@ -38,35 +39,39 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
     super.dispose();
   }
 
-  Future<List<_Item>> _load() async {
-    await ref.read(libraryRepositoryProvider).pullFromBackend();
-    final rows = await ref.read(libraryRepositoryProvider).localHistory(limit: 50);
-    final mangaRepo = ref.read(mangaRepositoryProvider);
+  /// Fast: read everything from the local cache only (no network).
+  Future<List<_Item>> _loadLocal() async {
+    final lib = ref.read(libraryRepositoryProvider);
+    final repo = ref.read(mangaRepositoryProvider);
+    final rows = await lib.localHistory(limit: 50);
     final items = <_Item>[];
     for (final h in rows) {
-      var cached = await mangaRepo.cached(h.mangaId);
-      // Auto-heal: if we have no title/cover for this entry (e.g. read on
-      // another device, or never opened on this one), fetch it from the source
-      // once and cache it — so it stops showing "Unknown".
-      if (cached == null || cached.title.isEmpty) {
-        try {
-          await mangaRepo.detail(h.mangaId);
-          cached = await mangaRepo.cached(h.mangaId);
-        } catch (_) {
-          // source unreachable — leave as Unknown, try again next load
-        }
-      }
-      final summary = await mangaRepo.progressSummary(h.mangaId);
-      items.add(_Item(h, cached, summary));
+      items.add(_Item(
+          h, await repo.cached(h.mangaId), await repo.progressSummary(h.mangaId)));
     }
     return items;
   }
 
-  Future<void> _refresh() async {
-    final f = _load();
-    setState(() => _future = f);
-    await f;
+  /// Background: pull from backend, fill missing title/cover/source, then reload.
+  Future<void> _sync() async {
+    try {
+      final lib = ref.read(libraryRepositoryProvider);
+      final repo = ref.read(mangaRepositoryProvider);
+      await lib.pullFromBackend();
+      final rows = await lib.localHistory(limit: 50);
+      for (final h in rows) {
+        final c = await repo.cached(h.mangaId);
+        if (c == null || c.title.isEmpty || c.sourceName == null) {
+          try {
+            await repo.detail(h.mangaId);
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+    if (mounted) setState(() { _future = _loadLocal(); });
   }
+
+  Future<void> _refresh() async => _sync();
 
   void _toggle(String mangaId) {
     setState(() {
@@ -149,7 +154,7 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
                       subtitle: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(_progressLabel(it.summary)),
+                          Text(_progressLabel(it.summary, it.cached?.sourceName)),
                           Text(_ago(it.history.lastReadAt),
                               style: Theme.of(context).textTheme.bodySmall),
                         ],
@@ -163,7 +168,8 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
                           _continue(id);
                         }
                       },
-                      onLongPress: () => _toggle(id),
+                      onLongPress: () =>
+                          _selecting ? _toggle(id) : _showItemMenu(it),
                     );
                   },
                 );
@@ -236,6 +242,189 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
     if (mounted) _refresh();
   }
 
+  /// Long-press menu for a history entry.
+  void _showItemMenu(_Item it) {
+    final id = it.history.mangaId;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.play_arrow),
+              title: const Text('Continue reading'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _continue(id);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.swap_horiz),
+              title: const Text('Read from another source'),
+              subtitle: const Text('Resume at the same chapter elsewhere'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _switchSource(it);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Remove from history'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await ref.read(libraryRepositoryProvider).deleteHistory(id);
+                await _refresh();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.checklist),
+              title: const Text('Select'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _toggle(id);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _norm(String t) =>
+      t.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+
+  /// Find the same title on other sources and let the user resume there.
+  Future<void> _switchSource(_Item it) async {
+    final title = it.cached?.title;
+    if (title == null || title.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No title to match — open it once first.')));
+      }
+      return;
+    }
+    final repo = ref.read(mangaRepositoryProvider);
+    final resume = await repo.resumeTarget(it.history.mangaId);
+    final (_, curId) = SourceRegistry.parseGlobalId(it.history.mangaId);
+    if (!mounted) return;
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text('Read "$title" from another source',
+                  style: Theme.of(ctx).textTheme.titleMedium),
+            ),
+            Flexible(
+              child: FutureBuilder<List<UManga>>(
+                future: repo.search(title: title),
+                builder: (ctx, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const SizedBox(
+                        height: 120,
+                        child: Center(child: CircularProgressIndicator()));
+                  }
+                  final want = _norm(title);
+                  final seen = <String>{};
+                  final cands = <UManga>[];
+                  for (final m in snap.data ?? const <UManga>[]) {
+                    if (_norm(m.title) != want) continue;
+                    if (m.id == curId) continue; // skip the source we came from
+                    if (seen.add(m.globalId)) cands.add(m);
+                  }
+                  if (cands.isEmpty) {
+                    return const Padding(
+                      padding: EdgeInsets.fromLTRB(20, 0, 20, 24),
+                      child: Text('No other source has this title.'),
+                    );
+                  }
+                  return ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final m in cands)
+                        ListTile(
+                          leading: SizedBox(
+                              width: 38, height: 52, child: MangaCover(url: m.coverUrl)),
+                          title: Text(m.displayLabel),
+                          subtitle: m.languages.isNotEmpty
+                              ? Text(m.languages.first.toUpperCase())
+                              : null,
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            _openOnSource(m, resume?.chapterNumber, resume?.language);
+                          },
+                        ),
+                      const SizedBox(height: 8),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Open [target] at the chapter nearest to [chapterNumber] (so resume lands
+  /// on the same chapter you were reading on the old source).
+  Future<void> _openOnSource(
+      UManga target, String? chapterNumber, String? language) async {
+    final repo = ref.read(mangaRepositoryProvider);
+    final lang = (language != null && language.isNotEmpty)
+        ? language
+        : (target.languages.isNotEmpty ? target.languages.first : 'en');
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    List<UChapter> chapters = const [];
+    try {
+      chapters = await repo.feed(target.globalId, lang);
+    } catch (_) {}
+    if (mounted) Navigator.of(context, rootNavigator: true).pop(); // close loader
+    if (!mounted) return;
+
+    if (chapters.isEmpty) {
+      await context.push('/manga/${Uri.encodeComponent(target.globalId)}');
+      if (mounted) _refresh();
+      return;
+    }
+
+    // Pick the chapter whose number is closest to where we left off.
+    final want = double.tryParse(chapterNumber ?? '');
+    UChapter match = chapters.last; // default: latest
+    if (want != null) {
+      var bestDiff = double.infinity;
+      for (final c in chapters) {
+        final n = double.tryParse(c.number ?? '');
+        if (n == null) continue;
+        final d = (n - want).abs();
+        if (d < bestDiff) {
+          bestDiff = d;
+          match = c;
+        }
+      }
+    }
+    await context.push(
+      '/reader/${Uri.encodeComponent(target.globalId)}/${Uri.encodeComponent(match.globalId)}',
+      extra: chapters,
+    );
+    if (mounted) _refresh();
+  }
+
   String _ago(DateTime t) {
     final d = DateTime.now().difference(t);
     if (d.inMinutes < 60) return '${d.inMinutes}m ago';
@@ -243,9 +432,10 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
     return '${d.inDays}d ago';
   }
 
-  String _progressLabel(ProgressSummary s) {
+  String _progressLabel(ProgressSummary s, String? source) {
     final parts = <String>[];
-    if (s.lastChapter != null) parts.add('Last read: Ch. ${s.lastChapter}');
+    if (source != null && source.isNotEmpty) parts.add(source);
+    if (s.lastChapter != null) parts.add('Ch. ${s.lastChapter}');
     parts.add('${s.readCount} chapter${s.readCount == 1 ? '' : 's'} read');
     return parts.join(' · ');
   }

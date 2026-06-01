@@ -1,10 +1,27 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../../core/config.dart' show AppConfig, ReaderQuality;
 import '../../core/reader_settings.dart';
+import '../../core/theme.dart';
 import '../../state/providers.dart';
+
+/// Preset background colors (palette-derived dark tones).
+const _bgPresets = <int>[
+  0xFF1E1726, // default plum
+  0xFF181020,
+  0xFF2A2035,
+  0xFF0E0E12, // near-black
+  0xFF14121A,
+  0xFF201430,
+];
 
 class SettingsTab extends ConsumerWidget {
   const SettingsTab({super.key});
@@ -14,6 +31,7 @@ class SettingsTab extends ConsumerWidget {
     final settings = ref.watch(readerSettingsProvider);
     final settingsCtrl = ref.read(readerSettingsProvider.notifier);
     final username = ref.read(authControllerProvider.notifier).username;
+    final bg = ref.watch(backgroundProvider);
 
     return Column(
       children: [
@@ -24,7 +42,9 @@ class SettingsTab extends ConsumerWidget {
               ListTile(
                 leading: const Icon(Icons.person),
                 title: Text(username ?? 'Account'),
-                subtitle: const Text('Signed in'),
+                subtitle: const Text('View profile, library & history'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/profile'),
               ),
               const Divider(),
               const Padding(
@@ -102,6 +122,53 @@ class SettingsTab extends ConsumerWidget {
                 onChanged: (v) => settingsCtrl.setShowNsfw(v),
               ),
               const Divider(),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Text('Appearance', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.palette),
+                title: const Text('Background'),
+                subtitle: Text(bg.imagePath != null
+                    ? 'Custom image'
+                    : bg.colorValue != null
+                        ? 'Custom color'
+                        : 'Default'),
+                trailing: bg.isDefault
+                    ? null
+                    : TextButton(
+                        onPressed: () => ref.read(backgroundProvider.notifier).reset(),
+                        child: const Text('Reset'),
+                      ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    for (final c in _bgPresets)
+                      _ColorSwatch(
+                        color: Color(c),
+                        selected: bg.colorValue == c,
+                        onTap: () => ref.read(backgroundProvider.notifier).setColor(c),
+                      ),
+                    // Custom color (RGB sliders).
+                    _SwatchButton(
+                      icon: Icons.colorize,
+                      label: 'Custom',
+                      onTap: () => _customColorDialog(context, ref, bg.colorValue ?? 0xFF1E1726),
+                    ),
+                    // Pick a local image.
+                    _SwatchButton(
+                      icon: Icons.image,
+                      label: 'Image',
+                      onTap: () => _pickBackgroundImage(ref),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
               const ListTile(
                 leading: Icon(Icons.info_outline),
                 title: Text('App version'),
@@ -172,4 +239,130 @@ class SettingsTab extends ConsumerWidget {
     );
   }
 
+  /// Pick an image from the device, copy it into the app's documents dir, and
+  /// set it as the background (survives restarts).
+  Future<void> _pickBackgroundImage(WidgetRef ref) async {
+    final res = await FilePicker.platform.pickFiles(type: FileType.image);
+    final src = res?.files.single.path;
+    if (src == null) return;
+    final dir = await getApplicationDocumentsDirectory();
+    // New filename each time so the OS image cache doesn't show the old one.
+    final dest = p.join(dir.path,
+        'app_background_${DateTime.now().millisecondsSinceEpoch}${p.extension(src)}');
+    await File(src).copy(dest);
+    await ref.read(backgroundProvider.notifier).setImage(dest);
+  }
+
+  /// Simple RGB color picker (no extra dependency).
+  Future<void> _customColorDialog(BuildContext context, WidgetRef ref, int initial) async {
+    int r = (initial >> 16) & 0xFF;
+    int g = (initial >> 8) & 0xFF;
+    int b = initial & 0xFF;
+    int pack() => 0xFF000000 | (r << 16) | (g << 8) | b;
+
+    final result = await showDialog<int>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Custom color'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Color(pack()),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white24),
+                ),
+              ),
+              _channel(ctx, 'R', r, (v) => setLocal(() => r = v)),
+              _channel(ctx, 'G', g, (v) => setLocal(() => g = v)),
+              _channel(ctx, 'B', b, (v) => setLocal(() => b = v)),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, pack()), child: const Text('Apply')),
+          ],
+        ),
+      ),
+    );
+    if (result != null) await ref.read(backgroundProvider.notifier).setColor(result);
+  }
+
+  Widget _channel(BuildContext context, String label, int value, ValueChanged<int> onChanged) {
+    return Row(
+      children: [
+        SizedBox(width: 18, child: Text(label)),
+        Expanded(
+          child: Slider(
+            min: 0,
+            max: 255,
+            value: value.toDouble(),
+            onChanged: (v) => onChanged(v.round()),
+          ),
+        ),
+        SizedBox(width: 32, child: Text('$value', textAlign: TextAlign.end)),
+      ],
+    );
+  }
+}
+
+/// A tappable color square for the background presets.
+class _ColorSwatch extends StatelessWidget {
+  const _ColorSwatch({required this.color, required this.selected, required this.onTap});
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? AppTheme.pink : Colors.white24,
+            width: selected ? 3 : 1,
+          ),
+        ),
+        child: selected
+            ? const Icon(Icons.check, size: 20, color: Colors.white)
+            : null,
+      ),
+    );
+  }
+}
+
+/// A square action button matching the swatch grid (custom color / image).
+class _SwatchButton extends StatelessWidget {
+  const _SwatchButton({required this.icon, required this.label, required this.onTap});
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Icon(icon, size: 20, semanticLabel: label),
+      ),
+    );
+  }
 }

@@ -12,6 +12,11 @@ class CachedManga {
 
   late String title;
   String? coverUrl;
+
+  /// Underlying source label (e.g. "Sushi-Scan", "MangaDex") so History/Library
+  /// can show where a title was read from.
+  String? sourceName;
+
   String description = '';
   String status = 'unknown';
   int? year;

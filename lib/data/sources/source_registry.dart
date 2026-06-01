@@ -51,17 +51,32 @@ class SourceRegistry {
   /// time a source finishes, so fast sources (MangaDex) render immediately and
   /// slow ones (Suwayomi with many extensions) fill in. Each source is capped
   /// by a timeout so one hanging source can't block the rest.
+  /// Underlying sources across all providers (for the source picker).
+  Future<List<SourceInfo>> listSources({List<String>? languages}) async {
+    final out = <SourceInfo>[];
+    for (final s in all) {
+      try {
+        out.addAll(await s.listSources(languages: languages));
+      } catch (_) {
+        // skip a provider that can't list
+      }
+    }
+    return out;
+  }
+
   Future<void> searchAllProgressive({
     required String title,
     List<String>? languages,
     List<String>? status,
     int page = 1,
+    List<String>? sourceIds,
     required void Function(List<UManga>) onUpdate,
   }) {
     // Rank merged results by how well each title matches the query, so the best
     // match surfaces at the top instead of being buried among other sources.
     return _progressive(
-      (s) => s.search(title: title, languages: languages, status: status, page: page),
+      (s) => s.search(
+          title: title, languages: languages, status: status, page: page, sourceIds: sourceIds),
       (list) => onUpdate(_rankByRelevance(list, title)),
     );
   }
@@ -99,18 +114,33 @@ class SourceRegistry {
   Future<void> popularAllProgressive({
     List<String>? languages,
     int page = 1,
+    List<String>? sourceIds,
     required void Function(List<UManga>) onUpdate,
   }) {
-    return _progressive((s) => s.popular(languages: languages, page: page), onUpdate);
+    return _progressive(
+        (s) => s.popular(languages: languages, page: page, sourceIds: sourceIds), onUpdate);
+  }
+
+  /// Latest-updated titles across the source(s).
+  Future<void> latestAllProgressive({
+    List<String>? languages,
+    int page = 1,
+    List<String>? sourceIds,
+    required void Function(List<UManga>) onUpdate,
+  }) {
+    return _progressive(
+        (s) => s.latest(languages: languages, page: page, sourceIds: sourceIds), onUpdate);
   }
 
   /// "Suggestions" for the Search landing view: popular across the source(s).
   Future<void> proposalsProgressive({
     List<String>? languages,
     int page = 1,
+    List<String>? sourceIds,
     required void Function(List<UManga>) onUpdate,
   }) {
-    return popularAllProgressive(languages: languages, page: page, onUpdate: onUpdate);
+    return popularAllProgressive(
+        languages: languages, page: page, sourceIds: sourceIds, onUpdate: onUpdate);
   }
 
   Future<void> _progressive(
@@ -120,7 +150,7 @@ class SourceRegistry {
     final acc = <UManga>[];
     await Future.wait(all.map((s) async {
       try {
-        final r = await work(s).timeout(const Duration(seconds: 30));
+        final r = await work(s).timeout(const Duration(seconds: 15));
         acc.addAll(r);
       } catch (_) {
         // timeout / source error → contribute nothing

@@ -7,12 +7,15 @@ import 'core/theme.dart';
 import 'data/sources/manga_source.dart';
 import 'state/providers.dart';
 import 'ui/update/update_gate.dart';
+import 'ui/widgets/app_background.dart';
 import 'ui/auth/login_screen.dart';
 import 'ui/detail/detail_screen.dart';
 import 'ui/history/history_tab.dart';
 import 'ui/home_shell.dart';
 import 'ui/library/library_tab.dart';
+import 'ui/profile/profile_screen.dart';
 import 'ui/reader/reader_screen.dart';
+import 'ui/recommend/recommend_screen.dart';
 import 'ui/search/search_tab.dart';
 import 'ui/settings/settings_tab.dart';
 import 'ui/splash_screen.dart';
@@ -81,10 +84,14 @@ class _TAppReaderAppState extends ConsumerState<TAppReaderApp> {
               GoRoute(path: '/history', builder: (_, __) => const HistoryTab()),
             ]),
             StatefulShellBranch(routes: [
+              GoRoute(path: '/discover', builder: (_, __) => const RecommendScreen()),
+            ]),
+            StatefulShellBranch(routes: [
               GoRoute(path: '/settings', builder: (_, __) => const SettingsTab()),
             ]),
           ],
         ),
+        GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
         GoRoute(
           // :id is a URL-encoded globalId ("mangadex:uuid" / "comick:hid").
           path: '/manga/:id',
@@ -116,8 +123,9 @@ class _TAppReaderAppState extends ConsumerState<TAppReaderApp> {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.build(),
       routerConfig: _router,
-      builder: (context, child) =>
-          UpdateGate(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) => AppBackground(
+        child: UpdateGate(child: child ?? const SizedBox.shrink()),
+      ),
     );
   }
 }

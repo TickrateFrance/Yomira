@@ -57,7 +57,9 @@ class AppTheme {
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: _scheme,
-      scaffoldBackgroundColor: bg,
+      // Transparent so the app-wide background (default color, custom color, or
+      // user image — see AppBackground) shows through every screen.
+      scaffoldBackgroundColor: Colors.transparent,
       splashFactory: InkSparkle.splashFactory,
     );
 
@@ -138,7 +140,7 @@ class AppTheme {
         indicatorColor: _scheme.primaryContainer,
         elevation: 0,
         height: 64,
-        labelTextStyle: WidgetStatePropertyAll(
+        labelTextStyle: const WidgetStatePropertyAll(
           TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: muted),
         ),
         iconTheme: WidgetStateProperty.resolveWith((s) => IconThemeData(

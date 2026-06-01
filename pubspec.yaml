@@ -1,7 +1,7 @@
 name: tappreader
 description: Private manga/manhwa reader using the MangaDex public API. No GMS/Firebase.
 publish_to: "none"
-version: 1.2.5+5
+version: 1.2.6+6
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -43,6 +43,9 @@ dependencies:
   # Unix socket on Linux/macOS). No native build step.
   win32: ^5.5.0
   ffi: ^2.1.0
+
+  # Pick a background image from the device (Android SAF / native desktop dialog)
+  file_picker: ^8.1.2
 
   # Misc
   collection: ^1.18.0

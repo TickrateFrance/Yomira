@@ -93,9 +93,13 @@ class LibraryRepository {
   /// resume-points survive a reinstall or a fresh device.
   Future<void> pullFromBackend() async {
     try {
-      final lib = await _backend.getLibrary();
-      final hist = await _backend.getHistory(limit: 100);
-      final prog = await _backend.getProgress();
+      // Fire all three in parallel (don't await each sequentially).
+      final libF = _backend.getLibrary();
+      final histF = _backend.getHistory(limit: 100);
+      final progF = _backend.getProgress();
+      final lib = await libF;
+      final hist = await histF;
+      final prog = await progF;
       await _db.isar.writeTxn(() async {
         for (final e in lib) {
           await _db.isar.library.put(LocalLibrary()

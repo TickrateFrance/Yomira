@@ -25,9 +25,9 @@ jobs:
         with:
           channel: stable
       - run: flutter --version
-      # Regenerate scaffolding not committed (e.g. the Gradle wrapper). No --org
-      # so the existing package (com.tappreader.app) is kept, not rewritten.
-      - run: flutter create . --platforms=android
+      # NOTE: we do NOT run "flutter create" here. The committed android/ (Groovy
+      # Gradle + wrapper) is complete; CI's newer Flutter would otherwise drop
+      # Kotlin-DSL *.gradle.kts next to the Groovy files and Gradle would abort.
       # Real .env is never committed — build with the placeholder example.
       - run: cp .env.example .env
       - run: flutter pub get

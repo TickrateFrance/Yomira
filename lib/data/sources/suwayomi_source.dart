@@ -110,7 +110,17 @@ class SuwayomiSource implements MangaSource {
       tags: ((m['genre'] as List?) ?? const []).whereType<String>().toList(),
       languages: lang != null ? [lang] : const [],
       sourceName: sourceName,
+      updatedAt: _uploadDate(m['latestUploadedChapter']),
     );
+  }
+
+  /// Parse latestUploadedChapter.uploadDate (ms since epoch, number or string).
+  DateTime? _uploadDate(dynamic chapter) {
+    if (chapter is! Map) return null;
+    final raw = chapter['uploadDate'];
+    final ms = raw is num ? raw.toInt() : int.tryParse('$raw');
+    if (ms == null || ms <= 0) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ms);
   }
 
   String _statusOf(String? s) {
@@ -135,7 +145,7 @@ class SuwayomiSource implements MangaSource {
     mutation Fetch($source: LongString!, $type: FetchSourceMangaType!, $query: String, $page: Int!) {
       fetchSourceManga(input: { source: $source, type: $type, query: $query, page: $page }) {
         hasNextPage
-        mangas { id title thumbnailUrl status }
+        mangas { id title thumbnailUrl status latestUploadedChapter { uploadDate } }
       }
     }
   ''';
@@ -145,8 +155,15 @@ class SuwayomiSource implements MangaSource {
     String? query,
     List<String>? languages,
     int page = 1,
+    List<String>? sourceIds,
   }) async {
-    final sources = await _sourcesFor(languages);
+    var sources = await _sourcesFor(languages);
+    // Restrict to the picked sources when given — this is the big speed-up
+    // (query 2 sources instead of ~25).
+    if (sourceIds != null && sourceIds.isNotEmpty) {
+      final keep = sourceIds.toSet();
+      sources = sources.where((s) => keep.contains(s.id)).toList();
+    }
     final results = await Future.wait(sources.map((s) async {
       try {
         final data = await _gql(_fetchSourceMangaMutation, {
@@ -154,7 +171,7 @@ class SuwayomiSource implements MangaSource {
           'type': type,
           'query': query,
           'page': page,
-        }).timeout(const Duration(seconds: 20)); // cap each source independently
+        }).timeout(const Duration(seconds: 12)); // cap each source independently
         final mangas =
             (((data['fetchSourceManga'] as Map?)?['mangas']) as List?) ?? const [];
         return mangas
@@ -175,14 +192,32 @@ class SuwayomiSource implements MangaSource {
     List<String>? languages,
     List<String>? status,
     int page = 1,
+    List<String>? sourceIds,
   }) {
     return _fetchAcrossSources(
-        type: 'SEARCH', query: title, languages: languages, page: page);
+        type: 'SEARCH', query: title, languages: languages, page: page, sourceIds: sourceIds);
   }
 
   @override
-  Future<List<UManga>> popular({List<String>? languages, int page = 1}) {
-    return _fetchAcrossSources(type: 'POPULAR', languages: languages, page: page);
+  Future<List<UManga>> popular({List<String>? languages, int page = 1, List<String>? sourceIds}) {
+    return _fetchAcrossSources(
+        type: 'POPULAR', languages: languages, page: page, sourceIds: sourceIds);
+  }
+
+  @override
+  Future<List<UManga>> latest({List<String>? languages, int page = 1, List<String>? sourceIds}) {
+    // Sources that don't support LATEST just error and contribute nothing.
+    return _fetchAcrossSources(
+        type: 'LATEST', languages: languages, page: page, sourceIds: sourceIds);
+  }
+
+  @override
+  Future<List<SourceInfo>> listSources({List<String>? languages}) async {
+    final sources = await _sourcesFor(languages);
+    return sources
+        .map((s) => SourceInfo(id: s.id, name: s.name, lang: s.lang, isNsfw: s.isNsfw))
+        .toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
 
   // ---- detail / languages / feed ----

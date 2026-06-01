@@ -21,6 +21,7 @@ class HomeShell extends ConsumerStatefulWidget {
     (icon: Icons.bookmark, label: 'Library'),
     (icon: Icons.search, label: 'Search'),
     (icon: Icons.history, label: 'History'),
+    (icon: Icons.auto_awesome, label: 'Discover'),
     (icon: Icons.settings, label: 'Settings'),
   ];
 
@@ -77,12 +78,13 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             ),
           );
 
-    // Desktop shortcut: "R" refreshes the active tab. A focused text field
-    // (e.g. Search) consumes the key first, so typing "r" is unaffected.
+    // Desktop refresh shortcut: F5 or Ctrl+R (bare "R" is avoided so it never
+    // swallows typing in the search field).
+    void refresh() => ref.read(tabRefreshProvider).refresh(index);
     return CallbackShortcuts(
       bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyR): () =>
-            ref.read(tabRefreshProvider).refresh(index),
+        const SingleActivator(LogicalKeyboardKey.f5): refresh,
+        const SingleActivator(LogicalKeyboardKey.keyR, control: true): refresh,
       },
       child: Focus(autofocus: true, child: scaffold),
     );
@@ -106,15 +108,22 @@ class _SideRail extends StatelessWidget {
         onDestinationSelected: onSelected,
         labelType: NavigationRailLabelType.all,
         backgroundColor: Colors.transparent,
-        leading: const Padding(
-          padding: EdgeInsets.symmetric(vertical: 18),
-          child: Column(
-            children: [
-              AppLogo(size: 42, radius: 12),
-              SizedBox(height: 6),
-              Text('Yomira',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
-            ],
+        leading: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 18),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => onSelected(0), // back to the main page (Library)
+            child: const Padding(
+              padding: EdgeInsets.all(4),
+              child: Column(
+                children: [
+                  AppLogo(size: 42, radius: 12),
+                  SizedBox(height: 6),
+                  Text('Yomira',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
           ),
         ),
         destinations: [
@@ -124,6 +133,30 @@ class _SideRail extends StatelessWidget {
               label: Text(d.label),
             ),
         ],
+        // Pinned to the bottom of the rail: open the user profile.
+        trailing: Expanded(
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => context.push('/profile'),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.account_circle),
+                      SizedBox(height: 4),
+                      Text('Profile', style: TextStyle(fontSize: 11)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

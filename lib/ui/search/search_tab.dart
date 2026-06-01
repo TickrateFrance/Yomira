@@ -7,6 +7,7 @@ import '../../data/sources/manga_source.dart';
 import '../../repositories/auth_repository.dart';
 import '../../state/providers.dart';
 import '../widgets/async_views.dart';
+import '../widgets/manga_cover.dart';
 import '../widgets/overlay_poster.dart';
 
 /// Status filter options matching MangaDex.
@@ -32,9 +33,17 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   List<UManga> _results = const [];
   bool _showingPopular = false;
 
-  /// Desktop only: selected library (source label) in the side panel.
-  /// null = "All sources". Ignored while a global search is active.
-  String? _selectedLibrary;
+  /// Desktop only: the source picker. Empty = query all sources; otherwise only
+  /// these source ids are queried (much faster). Applies to popular + search.
+  final Set<String> _selectedSourceIds = {};
+  List<SourceInfo> _sources = const [];
+  bool _sourcesLoading = true;
+
+  /// Desktop sidebar language filter for the source list: 'all' | 'en' | 'fr'.
+  String _sidebarLang = 'all';
+
+  /// Browse mode: false = Trending (popular), true = Latest (new releases).
+  bool _showLatest = false;
 
   /// True once the user has run a search/popular at least once (controls the
   /// initial prompt vs. the "no results" message).
@@ -43,11 +52,26 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   @override
   void initState() {
     super.initState();
-    // Landing suggestions: blended ~10% MangaDex / ~90% Suwayomi.
+    // Landing suggestions.
     _loadPopular();
+    _loadSources();
     // Desktop "R" refresh shortcut (Search = tab index 1).
     ref.read(tabRefreshProvider).register(1, _refreshTab);
   }
+
+  /// Load the underlying source list for the desktop picker.
+  Future<void> _loadSources() async {
+    try {
+      final list =
+          await ref.read(mangaRepositoryProvider).listSources(languages: _languageFilter);
+      if (mounted) setState(() { _sources = list; _sourcesLoading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _sourcesLoading = false);
+    }
+  }
+
+  /// Re-run whatever view is active (after a source selection change).
+  void _rerun() => _showingPopular ? _loadPopular() : _search();
 
   @override
   void dispose() {
@@ -92,17 +116,23 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   }
 
   /// Dispatches a paged fetch for the current mode (suggestions vs. search).
+  /// Empty selection = all sources (mobile never sets it).
   Future<void> _fetch(int page, void Function(List<UManga>) onUpdate) {
     final repo = ref.read(mangaRepositoryProvider);
+    final ids = _selectedSourceIds.isEmpty ? null : _selectedSourceIds.toList();
     if (_showingPopular) {
-      return repo.proposalsProgressive(
-          languages: _languageFilter, page: page, onUpdate: onUpdate);
+      return _showLatest
+          ? repo.latestProgressive(
+              languages: _languageFilter, page: page, sourceIds: ids, onUpdate: onUpdate)
+          : repo.proposalsProgressive(
+              languages: _languageFilter, page: page, sourceIds: ids, onUpdate: onUpdate);
     }
     return repo.searchProgressive(
       title: _ctrl.text.trim(),
       status: _selectedStatus.toList(),
       languages: _languageFilter,
       page: page,
+      sourceIds: ids,
       onUpdate: onUpdate,
     );
   }
@@ -293,12 +323,14 @@ class _SearchTabState extends ConsumerState<SearchTab> {
               message: 'Search a manga or manhwa across all your sources',
               icon: Icons.auto_stories);
     }
-    // Browse (landing) → shelves grouped by source. Search → overlay grid.
-    return _showingPopular ? _browse() : _resultsGrid();
+    // Both browse and search: grouped-by-title cards → source picker on tap.
+    return _resultsGrid();
   }
 
-  /// Search results: responsive grid of overlay cards.
+  /// Grouped by title (one card per series, listing how many sources have it).
+  /// Responsive grid of overlay cards. Used for browse + search.
   Widget _resultsGrid() {
+    final groups = _groupByTitle(_results);
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -307,64 +339,91 @@ class _SearchTabState extends ConsumerState<SearchTab> {
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
       ),
-      itemCount: _results.length,
-      itemBuilder: (_, i) =>
-          OverlayPosterCard(manga: _results[i], onTap: () => _open(_results[i])),
+      itemCount: groups.length,
+      itemBuilder: (_, i) => _groupCard(groups[i]),
     );
   }
 
-  /// Browse view: a "Trending" row + one horizontal shelf per source.
-  Widget _browse() {
-    final groups = <String, List<UManga>>{};
-    for (final m in _results) {
-      (groups[m.displayLabel] ??= []).add(m);
+  // ---- title grouping + source picker ----
+
+  /// Merge same-title results from different sources into one entry.
+  List<_TitleGroup> _groupByTitle(List<UManga> list) {
+    final map = <String, _TitleGroup>{};
+    final order = <String>[];
+    for (final m in list) {
+      final key = m.title.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+      final g = map[key];
+      if (g == null) {
+        map[key] = _TitleGroup(m.title, [m]);
+        order.add(key);
+      } else {
+        g.members.add(m);
+      }
     }
-    final trending = _results.take(14).toList();
+    return [for (final k in order) map[k]!];
+  }
 
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 28),
-      children: [
-        if (trending.isNotEmpty) ...[
-          _shelfHeader('🔥 Trending'),
-          _shelf(trending, cardWidth: 152, height: 232),
-        ],
-        for (final entry in groups.entries) ...[
-          _shelfHeader(entry.key, count: entry.value.length),
-          _shelf(entry.value, cardWidth: 124, height: 196),
-        ],
-      ],
+  /// Representative for the card: the member with the newest update (so the
+  /// "recently updated" badge reflects any source), else the first.
+  UManga _rep(_TitleGroup g) {
+    UManga best = g.members.first;
+    for (final m in g.members) {
+      if (m.updatedAt != null &&
+          (best.updatedAt == null || m.updatedAt!.isAfter(best.updatedAt!))) {
+        best = m;
+      }
+    }
+    return best;
+  }
+
+  Widget _groupCard(_TitleGroup g) {
+    final rep = _rep(g);
+    final n = g.members.length;
+    return OverlayPosterCard(
+      manga: rep,
+      badgeOverride: n > 1 ? '$n sources' : null,
+      onTap: () => n == 1 ? _open(rep) : _openSourcePicker(g),
     );
   }
 
-  Widget _shelfHeader(String title, {int? count}) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
-      child: Row(
-        children: [
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          if (count != null) ...[
-            const SizedBox(width: 8),
-            Text('$count',
-                style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontSize: 12)),
+  /// Sheet listing every source that has this title; pick one to read from.
+  void _openSourcePicker(_TitleGroup g) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text('Read "${g.title}" from',
+                  style: Theme.of(ctx).textTheme.titleMedium),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final m in g.members)
+                    ListTile(
+                      leading: SizedBox(
+                          width: 38, height: 52, child: MangaCover(url: m.coverUrl)),
+                      title: Text(m.displayLabel),
+                      subtitle: m.languages.isNotEmpty
+                          ? Text(m.languages.first.toUpperCase())
+                          : null,
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _open(m);
+                      },
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _shelf(List<UManga> items, {required double cardWidth, required double height}) {
-    return SizedBox(
-      height: height,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: items.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (_, i) => SizedBox(
-          width: cardWidth,
-          child: OverlayPosterCard(manga: items[i], onTap: () => _open(items[i])),
         ),
       ),
     );
@@ -372,22 +431,8 @@ class _SearchTabState extends ConsumerState<SearchTab> {
 
   // ===================== Desktop split-pane layout =====================
 
-  /// Group loaded results by their underlying source label (the "libraries").
-  Map<String, List<UManga>> _groupedBySource() {
-    final g = <String, List<UManga>>{};
-    for (final m in _results) {
-      (g[m.displayLabel] ??= []).add(m);
-    }
-    return g;
-  }
-
-  /// Items shown in the main pane. A global search ignores the side selection;
-  /// otherwise filter the browse results to the picked library.
-  List<UManga> _visibleItems() {
-    if (!_showingPopular) return _results; // global search → all sources
-    if (_selectedLibrary == null) return _results; // "All sources"
-    return _results.where((m) => m.displayLabel == _selectedLibrary).toList();
-  }
+  // Results already reflect the selected sources (we query only those).
+  List<UManga> _visibleItems() => _results;
 
   Widget _desktopLayout(BuildContext context) {
     return SafeArea(
@@ -411,91 +456,139 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     );
   }
 
-  /// Left panel: library/source directory. Picking one filters the main pane.
+  /// Left panel: multi-select source picker. Checking sources restricts the
+  /// query to just them (faster); none checked = all sources.
   Widget _desktopSidebar(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final groups = _groupedBySource();
-    final names = groups.keys.toList()..sort();
     return Container(
-      width: 268,
+      width: 280,
       color: scheme.surfaceContainerLow,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
             child: Row(
               children: [
-                Icon(Icons.collections_bookmark, size: 20, color: scheme.primary),
+                Icon(Icons.tune, size: 20, color: scheme.primary),
                 const SizedBox(width: 10),
-                Text('Libraries', style: Theme.of(context).textTheme.titleMedium),
+                Text('Sources', style: Theme.of(context).textTheme.titleMedium),
               ],
             ),
           ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.only(bottom: 12),
-              children: [
-                _libTile(context,
-                    label: 'All sources',
-                    icon: Icons.apps,
-                    value: null,
-                    count: _results.length),
-                const Divider(height: 1),
-                for (final n in names)
-                  _libTile(context,
-                      label: n,
-                      icon: Icons.menu_book,
-                      value: n,
-                      count: groups[n]!.length),
+          // Language filter for which sources are listed.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: SegmentedButton<String>(
+              showSelectedIcon: false,
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              segments: const [
+                ButtonSegment(value: 'all', label: Text('All')),
+                ButtonSegment(value: 'en', label: Text('EN')),
+                ButtonSegment(value: 'fr', label: Text('FR')),
               ],
+              selected: {_sidebarLang},
+              onSelectionChanged: (s) => setState(() => _sidebarLang = s.first),
             ),
+          ),
+          if (_selectedSourceIds.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  icon: const Icon(Icons.clear_all, size: 18),
+                  label: Text('All sources (clear ${_selectedSourceIds.length})'),
+                  onPressed: () {
+                    setState(_selectedSourceIds.clear);
+                    _rerun();
+                  },
+                ),
+              ),
+            ),
+          const Divider(height: 1),
+          Expanded(
+            child: _sourcesLoading
+                ? const Center(
+                    child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2.4)))
+                : ListView(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    children: [
+                      for (final s in _sources.where((s) =>
+                          _sidebarLang == 'all' ||
+                          s.lang.toLowerCase() == _sidebarLang ||
+                          s.lang.toLowerCase() == 'all'))
+                        CheckboxListTile(
+                          dense: true,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          value: _selectedSourceIds.contains(s.id),
+                          onChanged: (v) {
+                            setState(() {
+                              if (v == true) {
+                                _selectedSourceIds.add(s.id);
+                              } else {
+                                _selectedSourceIds.remove(s.id);
+                              }
+                            });
+                            _rerun();
+                          },
+                          title: Text(s.name,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text(s.lang.toUpperCase(),
+                              style: const TextStyle(fontSize: 11)),
+                        ),
+                    ],
+                  ),
           ),
         ],
       ),
     );
   }
 
-  Widget _libTile(
-    BuildContext context, {
-    required String label,
-    required IconData icon,
-    required String? value,
-    required int count,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    final selected = _selectedLibrary == value;
-    return ListTile(
-      dense: true,
-      selected: selected,
-      selectedTileColor: scheme.primaryContainer,
-      selectedColor: scheme.onPrimaryContainer,
-      leading: Icon(icon, size: 20),
-      title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: count > 0
-          ? Text('$count',
-              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12))
-          : null,
-      onTap: () => setState(() => _selectedLibrary = value),
-    );
-  }
-
-  /// Persistent header: current view title + a global search field (top-right)
-  /// that always queries across every source regardless of the side selection.
+  /// Persistent header: current view title + a global search field (top-right).
   Widget _desktopTopBar(BuildContext context) {
     final searching = !_showingPopular;
+    final picked = _selectedSourceIds.length;
     final title = searching
         ? 'Search results'
-        : (_selectedLibrary ?? 'Browse all sources');
+        : (picked == 0
+            ? 'Browse all sources'
+            : '$picked source${picked == 1 ? '' : 's'} selected');
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
       child: Row(
         children: [
+          // Browsing → Trending/Latest toggle; searching → results title.
           Expanded(
-            child: Text(title,
-                style: Theme.of(context).textTheme.titleLarge,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
+            child: searching
+                ? Text(title,
+                    style: Theme.of(context).textTheme.titleLarge,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis)
+                : Align(
+                    alignment: Alignment.centerLeft,
+                    child: SegmentedButton<bool>(
+                      showSelectedIcon: false,
+                      segments: const [
+                        ButtonSegment(
+                            value: false,
+                            label: Text('Trending'),
+                            icon: Icon(Icons.local_fire_department)),
+                        ButtonSegment(
+                            value: true,
+                            label: Text('Latest'),
+                            icon: Icon(Icons.fiber_new)),
+                      ],
+                      selected: {_showLatest},
+                      onSelectionChanged: (s) {
+                        setState(() => _showLatest = s.first);
+                        _loadPopular();
+                      },
+                    ),
+                  ),
           ),
           const SizedBox(width: 16),
           SizedBox(
@@ -554,7 +647,8 @@ class _SearchTabState extends ConsumerState<SearchTab> {
             }
             return false;
           },
-          child: _desktopGrid(items),
+          // Always grouped-by-title (one card per series → source picker on tap).
+          child: _desktopGrid(items, groups: _groupByTitle(items)),
         ),
         if (_loadingMore && items.isNotEmpty)
           Positioned(
@@ -581,8 +675,9 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   }
 
   /// Column count is derived from the content pane width (not the full window),
-  /// so the grid stays correct next to the side panel.
-  Widget _desktopGrid(List<UManga> items) {
+  /// so the grid stays correct next to the side panel. Pass [groups] to render
+  /// grouped-by-title cards (search); otherwise renders [items] flat (browse).
+  Widget _desktopGrid(List<UManga> items, {List<_TitleGroup>? groups}) {
     return LayoutBuilder(
       builder: (context, c) {
         final cols = (c.maxWidth / 185).floor().clamp(2, 8);
@@ -594,11 +689,19 @@ class _SearchTabState extends ConsumerState<SearchTab> {
             crossAxisSpacing: 14,
             mainAxisSpacing: 14,
           ),
-          itemCount: items.length,
-          itemBuilder: (_, i) =>
-              OverlayPosterCard(manga: items[i], onTap: () => _open(items[i])),
+          itemCount: groups?.length ?? items.length,
+          itemBuilder: groups != null
+              ? (_, i) => _groupCard(groups[i])
+              : (_, i) => OverlayPosterCard(manga: items[i], onTap: () => _open(items[i])),
         );
       },
     );
   }
+}
+
+/// A search result merged across sources (same title, different sources).
+class _TitleGroup {
+  _TitleGroup(this.title, this.members);
+  final String title;
+  final List<UManga> members;
 }

@@ -25,36 +25,61 @@ class MangaRepository {
     return _sources.popularAll(languages: languages);
   }
 
+  /// Underlying sources available (for the desktop source picker).
+  Future<List<SourceInfo>> listSources({List<String>? languages}) {
+    return _sources.listSources(languages: languages);
+  }
+
   /// Progressive variants: [onUpdate] fires with accumulated results as each
   /// source returns, so the UI isn't blocked waiting on the slowest source.
+  /// [sourceIds] restricts the query to those sources (faster).
   Future<void> searchProgressive({
     required String title,
     List<String>? status,
     List<String>? languages,
     int page = 1,
+    List<String>? sourceIds,
     required void Function(List<UManga>) onUpdate,
   }) {
     return _sources.searchAllProgressive(
-        title: title, status: status, languages: languages, page: page, onUpdate: onUpdate);
+        title: title,
+        status: status,
+        languages: languages,
+        page: page,
+        sourceIds: sourceIds,
+        onUpdate: onUpdate);
   }
 
   Future<void> popularProgressive({
     List<String>? languages,
     int page = 1,
+    List<String>? sourceIds,
     required void Function(List<UManga>) onUpdate,
   }) {
     return _sources.popularAllProgressive(
-        languages: languages, page: page, onUpdate: onUpdate);
+        languages: languages, page: page, sourceIds: sourceIds, onUpdate: onUpdate);
   }
 
-  /// Blended suggestions (~10% MangaDex, ~90% Suwayomi) for the landing view.
+  /// Latest-updated titles (the "Latest" / new-releases view).
+  Future<void> latestProgressive({
+    List<String>? languages,
+    int page = 1,
+    List<String>? sourceIds,
+    required void Function(List<UManga>) onUpdate,
+  }) {
+    return _sources.latestAllProgressive(
+        languages: languages, page: page, sourceIds: sourceIds, onUpdate: onUpdate);
+  }
+
+  /// Blended suggestions for the landing view.
   Future<void> proposalsProgressive({
     List<String>? languages,
     int page = 1,
+    List<String>? sourceIds,
     required void Function(List<UManga>) onUpdate,
   }) {
     return _sources.proposalsProgressive(
-        languages: languages, page: page, onUpdate: onUpdate);
+        languages: languages, page: page, sourceIds: sourceIds, onUpdate: onUpdate);
   }
 
   Future<UManga> detail(String globalId) async {
@@ -121,6 +146,7 @@ class MangaRepository {
       ..mangaId = m.globalId
       ..title = m.title
       ..coverUrl = m.coverUrl
+      ..sourceName = m.sourceName
       ..description = m.description
       ..status = m.status
       ..year = m.year

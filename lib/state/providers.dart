@@ -4,11 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/api/dio_client.dart';
 import '../core/config.dart';
 import '../core/discord_presence.dart';
+import '../core/background_settings.dart';
 import '../core/reader_settings.dart';
 import '../core/runtime_config.dart';
 import '../core/tab_refresh.dart';
+import '../data/local/background_store.dart';
 import '../data/backend/backend_api.dart';
 import '../data/local/reader_prefs_store.dart';
+import '../data/ratings/mangadex_ratings.dart';
 import '../data/backend/token_store.dart';
 import '../data/local/isar_db.dart';
 import '../data/sources/manga_source.dart';
@@ -64,6 +67,17 @@ final _imageDioProvider = Provider<Dio>((ref) {
 });
 
 final tokenStoreProvider = Provider<TokenStore>((ref) => TokenStore());
+
+/// Canonical star ratings from the public MangaDex API (used for all sources).
+final mangadexRatingsProvider = Provider<MangaDexRatings>((ref) {
+  final dio = Dio(BaseOptions(
+    baseUrl: AppConfig.mangadexApiBase,
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 15),
+    headers: {'User-Agent': AppConfig.userAgent},
+  ));
+  return MangaDexRatings(dio);
+});
 
 /// Discord Rich Presence (desktop). Created once; init() called at startup.
 final discordPresenceProvider = Provider<DiscordPresence>(
@@ -206,4 +220,14 @@ class ReaderSettingsController extends StateNotifier<ReaderSettings> {
 final readerSettingsProvider =
     StateNotifierProvider<ReaderSettingsController, ReaderSettings>((ref) {
   throw UnimplementedError('readerSettingsProvider must be overridden in main()');
+});
+
+/// Background customization (color / local image). Overridden in main().
+final backgroundStoreProvider = Provider<BackgroundStore>((ref) {
+  throw UnimplementedError('backgroundStoreProvider must be overridden in main()');
+});
+
+final backgroundProvider =
+    StateNotifierProvider<BackgroundController, BackgroundSettings>((ref) {
+  throw UnimplementedError('backgroundProvider must be overridden in main()');
 });

@@ -6,14 +6,34 @@ import 'manga_cover.dart';
 /// Cover card with the title + source badge overlaid on the art (gradient
 /// scrim). Used by the browse shelves and the search results grid.
 class OverlayPosterCard extends StatelessWidget {
-  const OverlayPosterCard({super.key, required this.manga, this.onTap});
+  const OverlayPosterCard({
+    super.key,
+    required this.manga,
+    this.onTap,
+    this.badgeOverride,
+  });
 
   final UManga manga;
   final VoidCallback? onTap;
 
+  /// Replaces the source-name badge (e.g. "3 sources" for a grouped result).
+  final String? badgeOverride;
+
+  /// "Updated N d/h ago" when the latest chapter is at most a week old.
+  String? get _recentLabel {
+    final u = manga.updatedAt;
+    if (u == null) return null;
+    final d = DateTime.now().difference(u);
+    if (d.isNegative || d.inDays > 7) return null;
+    if (d.inHours < 1) return 'NEW';
+    if (d.inHours < 24) return '${d.inHours}h';
+    return '${d.inDays}d';
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final recent = _recentLabel;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
@@ -44,7 +64,7 @@ class OverlayPosterCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(7),
                 ),
                 child: Text(
-                  manga.displayLabel,
+                  badgeOverride ?? manga.displayLabel,
                   style: TextStyle(
                     fontSize: 9.5,
                     fontWeight: FontWeight.w700,
@@ -53,6 +73,34 @@ class OverlayPosterCard extends StatelessWidget {
                 ),
               ),
             ),
+            // "Recently updated" banner (top-right) — within the last week.
+            if (recent != null)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: scheme.primary,
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.fiber_new, size: 12, color: scheme.onPrimary),
+                      const SizedBox(width: 3),
+                      Text(
+                        recent,
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                          color: scheme.onPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             // Title.
             Positioned(
               left: 10,

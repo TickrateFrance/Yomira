@@ -18,10 +18,15 @@ class LibraryTab extends ConsumerStatefulWidget {
 class _LibraryTabState extends ConsumerState<LibraryTab> {
   late Future<List<_Entry>> _future;
 
+  /// Selected manga globalIds when in multi-select mode.
+  final Set<String> _selected = {};
+  bool get _selecting => _selected.isNotEmpty;
+
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _future = _loadLocal(); // instant from cache
+    _sync(); // refresh from backend in the background
     // Desktop "R" refresh shortcut (Library = tab index 0).
     ref.read(tabRefreshProvider).register(0, _refresh);
   }
@@ -32,31 +37,88 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
     super.dispose();
   }
 
-  Future<List<_Entry>> _load() async {
-    // Refresh from backend then read local.
-    await ref.read(libraryRepositoryProvider).pullFromBackend();
+  /// Fast: local cache only, no network.
+  Future<List<_Entry>> _loadLocal() async {
     final lib = await ref.read(libraryRepositoryProvider).localLibrary();
     final mangaRepo = ref.read(mangaRepositoryProvider);
-    final present = lib.where((e) => e.present).toList();
     final entries = <_Entry>[];
-    for (final row in present) {
-      final cached = await mangaRepo.cached(row.mangaId);
-      entries.add(_Entry(row.mangaId, cached));
+    for (final row in lib.where((e) => e.present)) {
+      entries.add(_Entry(row.mangaId, await mangaRepo.cached(row.mangaId)));
     }
     return entries;
   }
 
-  Future<void> _refresh() async {
-    final f = _load();
-    setState(() => _future = f);
-    await f;
+  Future<void> _sync() async {
+    try {
+      await ref.read(libraryRepositoryProvider).pullFromBackend();
+    } catch (_) {}
+    if (mounted) setState(() { _future = _loadLocal(); });
+  }
+
+  Future<void> _refresh() async => _sync();
+
+  void _toggle(String mangaId) {
+    setState(() {
+      if (!_selected.remove(mangaId)) _selected.add(mangaId);
+    });
+  }
+
+  Future<void> _deleteSelected() async {
+    final count = _selected.length;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove $count from library?'),
+        content: const Text(
+            'This removes the selected titles from your favorites. '
+            'Your reading history is not affected.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    final lib = ref.read(libraryRepositoryProvider);
+    for (final id in _selected) {
+      await lib.removeFavorite(id);
+    }
+    setState(() => _selected.clear());
+    await _refresh();
+  }
+
+  PreferredSizeWidget _appBar() {
+    if (_selecting) {
+      return AppBar(
+        automaticallyImplyLeading: false,
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          tooltip: 'Cancel selection',
+          onPressed: () => setState(() => _selected.clear()),
+        ),
+        title: Text('${_selected.length} selected'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete),
+            tooltip: 'Remove selected',
+            onPressed: _deleteSelected,
+          ),
+        ],
+      );
+    }
+    return AppBar(title: const Text('Library'), automaticallyImplyLeading: false);
   }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        AppBar(title: const Text('Library'), automaticallyImplyLeading: false),
+        _appBar(),
         Expanded(
           child: RefreshIndicator(
             onRefresh: _refresh,
@@ -86,11 +148,46 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
                   itemCount: items.length,
                   itemBuilder: (_, i) {
                     final e = items[i];
-                    return MangaPosterCard(
-                      coverUrl: e.cached?.coverUrl,
-                      title: e.cached?.title ?? 'Unknown',
-                      onTap: () =>
-                          context.push('/manga/${Uri.encodeComponent(e.mangaId)}'),
+                    final selected = _selected.contains(e.mangaId);
+                    final scheme = Theme.of(context).colorScheme;
+                    return GestureDetector(
+                      onLongPress: () => _toggle(e.mangaId),
+                      child: Stack(
+                        children: [
+                          MangaPosterCard(
+                            coverUrl: e.cached?.coverUrl,
+                            title: e.cached?.title ?? 'Unknown',
+                            onTap: () => _selecting
+                                ? _toggle(e.mangaId)
+                                : context.push(
+                                    '/manga/${Uri.encodeComponent(e.mangaId)}'),
+                          ),
+                          if (_selecting)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(12),
+                                    color: selected
+                                        ? scheme.primary.withValues(alpha: 0.25)
+                                        : Colors.black26,
+                                    border: selected
+                                        ? Border.all(color: scheme.primary, width: 3)
+                                        : null,
+                                  ),
+                                  alignment: Alignment.topRight,
+                                  padding: const EdgeInsets.all(6),
+                                  child: Icon(
+                                    selected
+                                        ? Icons.check_circle
+                                        : Icons.radio_button_unchecked,
+                                    color: selected ? scheme.primary : Colors.white70,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     );
                   },
                 );

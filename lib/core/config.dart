@@ -3,7 +3,7 @@ import 'dart:io';
 /// App-wide constants and runtime config.
 class AppConfig {
   /// Client version sent as X-App-Version. Keep in sync with pubspec version.
-  static const String appVersion = '1.2.5';
+  static const String appVersion = '1.2.6';
 
   /// Platform tag sent as X-Platform (matches AppVersion.platform on backend).
   static String get platform {
