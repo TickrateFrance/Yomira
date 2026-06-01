@@ -1,7 +1,7 @@
 name: tappreader
 description: Private manga/manhwa reader using the MangaDex public API. No GMS/Firebase.
 publish_to: "none"
-version: 1.2.6+6
+version: 1.2.7+7
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -31,21 +31,22 @@ dependencies:
   path: ^1.9.0
 
   # Secure storage for JWT (uses Android Keystore, no GMS)
-  flutter_secure_storage: ^9.2.2
+  flutter_secure_storage: ^10.3.1
 
   # Routing
-  go_router: ^14.2.7
+  go_router: ^17.2.3
 
   # Runtime config from a bundled .env file (no GMS)
-  flutter_dotenv: ^5.1.0
+  flutter_dotenv: ^6.0.1
 
   # Discord Rich Presence — pure-Dart IPC (Windows named pipe via win32 FFI,
   # Unix socket on Linux/macOS). No native build step.
-  win32: ^5.5.0
+  win32: ^5.15.0
   ffi: ^2.1.0
 
-  # Pick a background image from the device (Android SAF / native desktop dialog)
-  file_picker: ^8.1.2
+  # Pick a background image from the device (Android SAF / native desktop dialog).
+  # Pinned to the stable 8.x line (12.x beta removed FilePicker.platform).
+  file_picker: ^8.3.7
 
   # Misc
   collection: ^1.18.0
@@ -53,7 +54,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^6.0.0
   # Isar codegen
   isar_generator: ^3.1.0+1
   build_runner: ^2.4.13

@@ -96,10 +96,10 @@ class DiscordPresence {
       final p = name.toNativeUtf16();
       final h = w.CreateFile(
         p,
-        w.GENERIC_ACCESS_RIGHTS.GENERIC_READ | w.GENERIC_ACCESS_RIGHTS.GENERIC_WRITE,
+        w.GENERIC_READ | w.GENERIC_WRITE,
         0,
         nullptr,
-        w.FILE_CREATION_DISPOSITION.OPEN_EXISTING,
+        w.OPEN_EXISTING,
         0,
         w.NULL,
       );

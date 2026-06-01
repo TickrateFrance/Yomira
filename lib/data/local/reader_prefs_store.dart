@@ -8,9 +8,7 @@ import '../../core/reader_settings.dart';
 class ReaderPrefsStore {
   ReaderPrefsStore([FlutterSecureStorage? storage])
       : _storage = storage ??
-            const FlutterSecureStorage(
-              aOptions: AndroidOptions(encryptedSharedPreferences: true),
-            );
+            const FlutterSecureStorage();
 
   static const _key = 'reader_settings';
   final FlutterSecureStorage _storage;

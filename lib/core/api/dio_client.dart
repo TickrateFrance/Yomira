@@ -1,7 +1,9 @@
 import 'package:dio/dio.dart';
 
+import '../../data/backend/token_store.dart';
 import '../config.dart';
 import 'retry_interceptor.dart';
+import 'suwayomi_auth_interceptor.dart';
 import 'version_interceptor.dart';
 
 /// Builds the Dio instances the app uses (Suwayomi content + sync backend).
@@ -10,8 +12,9 @@ class DioClient {
 
   /// Suwayomi-Server Dio (GraphQL). Long receive timeout because Suwayomi
   /// scrapes sources live on first fetch. [baseUrl] points at the server root.
-  /// [authHeader] is the "Basic …" value when the server has Basic Auth on.
-  static Dio buildSuwayomi(String baseUrl, {String? authHeader}) {
+  /// Auth is the user's JWT (Bearer), injected per-request from [tokenStore];
+  /// the server validates it and adds the real Suwayomi credentials.
+  static Dio buildSuwayomi(String baseUrl, {TokenStore? tokenStore}) {
     final dio = Dio(
       BaseOptions(
         baseUrl: baseUrl,
@@ -20,10 +23,12 @@ class DioClient {
         headers: {
           'User-Agent': AppConfig.userAgent,
           'Content-Type': 'application/json',
-          if (authHeader != null) 'Authorization': authHeader,
         },
       ),
     );
+    if (tokenStore != null) {
+      dio.interceptors.add(SuwayomiAuthInterceptor(tokenStore));
+    }
     dio.interceptors.add(RetryInterceptor(dio: dio));
     return dio;
   }

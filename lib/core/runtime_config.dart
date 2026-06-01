@@ -20,7 +20,7 @@ class RuntimeConfig {
   final String suwayomiUser;
   final String suwayomiPass;
 
-  /// "Basic <base64>" header value, or null when no credentials are set.
+  /// `Basic <base64>` header value, or null when no credentials are set.
   String? get suwayomiAuthHeader {
     if (suwayomiUser.isEmpty && suwayomiPass.isEmpty) return null;
     final token = base64Encode(utf8.encode('$suwayomiUser:$suwayomiPass'));
@@ -44,9 +44,7 @@ class RuntimeConfig {
 class ConfigStore {
   ConfigStore([FlutterSecureStorage? storage])
       : _storage = storage ??
-            const FlutterSecureStorage(
-              aOptions: AndroidOptions(encryptedSharedPreferences: true),
-            );
+            const FlutterSecureStorage();
 
   static const _overrideKey = 'backend_base_url_override';
   static const _suwUserKey = 'suwayomi_user_override';

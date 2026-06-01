@@ -29,7 +29,8 @@ android {
 
     defaultConfig {
         applicationId = "com.tappreader.app"
-        minSdkVersion = flutter.minSdkVersion          // Isar needs >=21
+        // Android 8.0+ (matches the stated requirement; drops vulnerable 7.x).
+        minSdkVersion = 26
         targetSdk = 34
         versionCode = flutter.versionCode
         versionName = flutter.versionName

@@ -8,9 +8,7 @@ import '../../core/background_settings.dart';
 class BackgroundStore {
   BackgroundStore([FlutterSecureStorage? storage])
       : _storage = storage ??
-            const FlutterSecureStorage(
-              aOptions: AndroidOptions(encryptedSharedPreferences: true),
-            );
+            const FlutterSecureStorage();
 
   static const _key = 'background_settings';
   final FlutterSecureStorage _storage;

@@ -54,10 +54,12 @@ final _backendDioProvider = Provider<Dio>((ref) {
 /// HTTP headers for image requests to the Suwayomi server (User-Agent + Basic
 /// Auth when configured). Used by covers, reader pages, and downloads.
 final suwayomiImageHeadersProvider = Provider<Map<String, String>>((ref) {
-  final auth = ref.watch(configProvider).suwayomiAuthHeader;
+  // Rebuild on login/logout so the JWT header is current.
+  ref.watch(authControllerProvider);
+  final token = ref.watch(tokenStoreProvider).cachedToken;
   return {
     'User-Agent': AppConfig.userAgent,
-    if (auth != null) 'Authorization': auth,
+    if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
   };
 });
 
@@ -87,10 +89,9 @@ final discordPresenceProvider = Provider<DiscordPresence>(
 // ---- content source + registry (Suwayomi only) ----
 
 final _suwayomiDioProvider = Provider<Dio>((ref) {
-  final cfg = ref.watch(configProvider);
   return DioClient.buildSuwayomi(
     ref.watch(configStoreProvider).suwayomiBase,
-    authHeader: cfg.suwayomiAuthHeader,
+    tokenStore: ref.watch(tokenStoreProvider),
   );
 });
 

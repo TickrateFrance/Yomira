@@ -3,7 +3,7 @@ import 'dart:io';
 /// App-wide constants and runtime config.
 class AppConfig {
   /// Client version sent as X-App-Version. Keep in sync with pubspec version.
-  static const String appVersion = '1.2.6';
+  static const String appVersion = '1.2.7';
 
   /// Platform tag sent as X-Platform (matches AppVersion.platform on backend).
   static String get platform {
@@ -19,7 +19,7 @@ class AppConfig {
   static const String mangadexApiBase = 'https://api.mangadex.org';
 
   /// MangaDex cover image host. Covers built as:
-  /// https://uploads.mangadex.org/covers/<mangaId>/<coverFileName>
+  /// `https://uploads.mangadex.org/covers/<mangaId>/<coverFileName>`
   static const String mangadexUploadsBase = 'https://uploads.mangadex.org';
 
   /// Last-resort fallback backend URL, used only if there's no in-app override
