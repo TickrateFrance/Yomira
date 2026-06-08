@@ -34,16 +34,20 @@ Cross-device reading-progress sync. No ads. No tracking. No Google services.
 - Reading-progress sync across phone + desktop
 - Distraction-free reader: vertical (webtoon) & horizontal (manga) modes,
   adjustable page width, hideable bars, image prefetch
+- Offline downloads: save chapters to read without a connection
+- Discover tab with recommendations and ratings
 - Smart history with "continue where you left off"
-- Library / favorites
+- Library / favorites, plus a profile with reading stats
 - Adaptive UI - native on Android, desktop layout on Windows
-- Built-in update checker
+- Built-in self-updater (checks, downloads & installs new versions)
 
 ## Privacy
 
 - **No** Google Mobile Services, **no** Firebase, **no** FCM.
 - **No** ads, **no** analytics, **no** trackers, **no** telemetry.
-- The only Android permission is **INTERNET**.
+- Android permissions are minimal: **INTERNET** and **ACCESS_NETWORK_STATE**
+  (connectivity), plus **REQUEST_INSTALL_PACKAGES** used only to install an
+  in-app update you choose to download. No location, contacts, or storage access.
 - An account is optional and only used to **sync your reading progress** between
   your own devices.
 

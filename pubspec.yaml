@@ -1,7 +1,7 @@
 name: tappreader
 description: Private manga/manhwa reader using the MangaDex public API. No GMS/Firebase.
 publish_to: "none"
-version: 1.3.1+11
+version: 1.3.2+12
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

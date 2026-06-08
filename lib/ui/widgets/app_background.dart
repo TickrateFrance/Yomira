@@ -20,12 +20,18 @@ class AppBackground extends ConsumerWidget {
 
     Widget layer;
     if (bg.imagePath != null && File(bg.imagePath!).existsSync()) {
+      // Cap the decode to the screen width so a large imported photo cannot
+      // OOM-crash the app (full-res decode crashed on Android). A single
+      // dimension preserves the aspect ratio; BoxFit.cover still fills.
+      final media = MediaQuery.of(context);
+      final cacheW = (media.size.width * media.devicePixelRatio).round();
       layer = Stack(
         fit: StackFit.expand,
         children: [
           Image.file(
             File(bg.imagePath!),
             fit: BoxFit.cover,
+            cacheWidth: cacheW > 0 ? cacheW : null,
             errorBuilder: (_, __, ___) => const ColoredBox(color: AppTheme.bg),
           ),
           // Subtle scrim so foreground text/controls stay readable over photos.

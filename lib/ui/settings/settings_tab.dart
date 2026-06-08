@@ -177,7 +177,7 @@ class SettingsTab extends ConsumerWidget {
                     _SwatchButton(
                       icon: Icons.image,
                       label: 'Image',
-                      onTap: () => _pickBackgroundImage(ref),
+                      onTap: () => _pickBackgroundImage(ref, context),
                     ),
                   ],
                 ),
@@ -255,16 +255,27 @@ class SettingsTab extends ConsumerWidget {
 
   /// Pick an image from the device, copy it into the app's documents dir, and
   /// set it as the background (survives restarts).
-  Future<void> _pickBackgroundImage(WidgetRef ref) async {
-    final res = await FilePicker.platform.pickFiles(type: FileType.image);
-    final src = res?.files.single.path;
-    if (src == null) return;
-    final dir = await getApplicationDocumentsDirectory();
-    // New filename each time so the OS image cache doesn't show the old one.
-    final dest = p.join(dir.path,
-        'app_background_${DateTime.now().millisecondsSinceEpoch}${p.extension(src)}');
-    await File(src).copy(dest);
-    await ref.read(backgroundProvider.notifier).setImage(dest);
+  Future<void> _pickBackgroundImage(WidgetRef ref, BuildContext context) async {
+    try {
+      final res = await FilePicker.platform.pickFiles(type: FileType.image);
+      final files = res?.files;
+      if (files == null || files.isEmpty) return; // cancelled
+      final src = files.first.path;
+      if (src == null) return; // picked item has no local path (e.g. cloud-only)
+      final dir = await getApplicationDocumentsDirectory();
+      // New filename each time so the OS image cache doesn't show the old one.
+      final dest = p.join(dir.path,
+          'app_background_${DateTime.now().millisecondsSinceEpoch}${p.extension(src)}');
+      await File(src).copy(dest);
+      await ref.read(backgroundProvider.notifier).setImage(dest);
+    } catch (e) {
+      // Never let a picker/copy failure crash the app; surface it instead.
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not set background: $e')),
+        );
+      }
+    }
   }
 
   /// Simple RGB color picker (no extra dependency).

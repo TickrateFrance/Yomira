@@ -41,6 +41,14 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Use the legacy Skia renderer instead of Impeller. Impeller distorts
+             oversized image textures (large manga/scan pages) on Android,
+             stretching them horizontally; Skia downscales big images
+             proportionally so the native aspect ratio stays correct. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
     </application>
 
     <!-- Allow url_launcher to open https links (Android 11+ package visibility). -->
