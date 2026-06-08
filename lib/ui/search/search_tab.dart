@@ -311,8 +311,33 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     );
   }
 
+  /// Spinner + hint shown while a search/browse is in flight. Cloudflare-backed
+  /// sources are solved server-side and can take ~20-30s on a cold load, so we
+  /// say so instead of leaving a bare spinner (used on phone and desktop).
+  Widget _searchLoading() {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 18),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: Text(
+              'Searching all your sources...\n'
+              'Cloudflare-protected sources can take up to ~30s on first load.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBody() {
-    if (_loading) return const LoadingView();
+    if (_loading) return _searchLoading();
     if (_error != null) {
       return ErrorView(message: _error!, onRetry: _showingPopular ? _loadPopular : _search);
     }
@@ -623,7 +648,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   }
 
   Widget _desktopContent(BuildContext context) {
-    if (_loading) return const LoadingView();
+    if (_loading) return _searchLoading();
     if (_error != null) {
       return ErrorView(
           message: _error!, onRetry: _showingPopular ? _loadPopular : _search);

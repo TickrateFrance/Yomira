@@ -46,6 +46,20 @@ class SettingsTab extends ConsumerWidget {
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => context.push('/profile'),
               ),
+              ListTile(
+                leading: const Icon(Icons.download_for_offline_outlined),
+                title: const Text('Downloads'),
+                subtitle: const Text('Offline chapters & download queue'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/downloads'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.notifications_active_outlined),
+                title: const Text('Updates'),
+                subtitle: const Text('New chapters in your library'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/updates'),
+              ),
               const Divider(),
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 8, 16, 0),

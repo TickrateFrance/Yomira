@@ -1,9 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 
 /// App-wide constants and runtime config.
 class AppConfig {
   /// Client version sent as X-App-Version. Keep in sync with pubspec version.
-  static const String appVersion = '1.2.7';
+  static const String appVersion = '1.3.1';
 
   /// Platform tag sent as X-Platform (matches AppVersion.platform on backend).
   static String get platform {
@@ -14,6 +15,29 @@ class AppConfig {
     if (Platform.isLinux) return 'linux';
     return 'unknown';
   }
+
+  /// Direct binary download location for in-app self-update.
+  static const String updateBaseUrl = 'https://yomira.eu/downloads';
+
+  /// The platform-specific installer URL the in-app updater downloads. Null on
+  /// platforms where self-update isn't supported (the UI falls back to a link).
+  static String? get directUpdateUrl {
+    if (Platform.isAndroid) return '$updateBaseUrl/Yomira-latest.apk';
+    if (Platform.isWindows) return '$updateBaseUrl/Yomira-Setup.exe';
+    return null;
+  }
+
+  /// Basic-Auth login for the gated /downloads/ folder, so the in-app updater
+  /// can fetch the installer without showing a password prompt. NOTE: these are
+  /// embedded in the binary and can be extracted by decompiling — fine for a
+  /// private, friends-only app, but don't reuse this password elsewhere.
+  static const String _updateUser = 'yomira';
+  static const String _updatePass = 'Private33Yomira33Download';
+
+  /// `Authorization` header value for download requests. Empty if no creds set.
+  static String get updateAuthHeader => _updateUser.isEmpty
+      ? ''
+      : 'Basic ${base64Encode(utf8.encode('$_updateUser:$_updatePass'))}';
 
   /// MangaDex public API base. Read endpoints need no auth.
   static const String mangadexApiBase = 'https://api.mangadex.org';

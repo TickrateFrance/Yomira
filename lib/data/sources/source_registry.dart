@@ -150,7 +150,7 @@ class SourceRegistry {
     final acc = <UManga>[];
     await Future.wait(all.map((s) async {
       try {
-        final r = await work(s).timeout(const Duration(seconds: 15));
+        final r = await work(s).timeout(const Duration(seconds: 45));
         acc.addAll(r);
       } catch (_) {
         // timeout / source error → contribute nothing

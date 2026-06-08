@@ -1,0 +1,43 @@
+# Blank self-host template: Postgres + sync API.
+# Usage: cp .env.example .env  (edit secrets) then: docker compose up --build
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yomira}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yomira}
+      POSTGRES_DB: ${POSTGRES_DB:-yomira}
+    ports:
+      # Bind to localhost only - Postgres must never be reachable from outside
+      # the host. The api connects over the compose network (host "db").
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-yomira}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Inside the compose network the DB host is "db", not localhost.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-yomira}:${POSTGRES_PASSWORD:-yomira}@db:5432/${POSTGRES_DB:-yomira}?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      PORT: 3000
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    # Published for local testing only. In production put this behind a TLS
+    # reverse proxy (Caddy/nginx) - the app refuses cleartext in release builds.
+    ports:
+      - '3000:3000'
+
+volumes:
+  pgdata:

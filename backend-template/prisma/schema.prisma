@@ -1,0 +1,84 @@
+// Prisma schema - Yomira backend template.
+// Stores ONLY accounts + reading-progress metadata. No scan images.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  username     String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  progress ReadingProgress[]
+  library  Library[]
+  history  History[]
+
+  @@map("users")
+}
+
+model ReadingProgress {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  mangaId       String   @map("manga_id") // opaque manga id (e.g. MangaDex UUID)
+  chapterId     String   @map("chapter_id") // opaque chapter id
+  lastPage      Int      @default(0) @map("last_page")
+  read          Boolean  @default(false)
+  chapterNumber String?  @map("chapter_number") // "10", "10.5" - for resume + summary
+  language      String? // translated language - to re-fetch the feed on resume
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // One progress row per (user, chapter): upsert target.
+  @@unique([userId, chapterId])
+  @@index([userId, mangaId])
+  @@map("reading_progress")
+}
+
+model Library {
+  id      String   @id @default(uuid()) @db.Uuid
+  userId  String   @map("user_id") @db.Uuid
+  mangaId String   @map("manga_id")
+  addedAt DateTime @default(now()) @map("added_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, mangaId])
+  @@index([userId])
+  @@map("library")
+}
+
+model History {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  mangaId    String   @map("manga_id")
+  title      String   @default("") // snapshot so history renders without a live fetch
+  coverUrl   String   @default("") @map("cover_url")
+  lastReadAt DateTime @default(now()) @map("last_read_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // One history row per (user, manga); bump lastReadAt on re-read.
+  @@unique([userId, mangaId])
+  @@index([userId, lastReadAt])
+  @@map("history")
+}
+
+model AppVersion {
+  id                 String   @id @default(uuid()) @db.Uuid
+  platform           String   @unique // "android" | "windows" | ...
+  latestVersion      String   @map("latest_version")
+  minRequiredVersion String   @map("min_required_version")
+  url                String   @default("") // download/landing URL for this platform
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("app_versions")
+}

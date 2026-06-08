@@ -1,9 +1,13 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config.dart';
+import '../../core/download_manager.dart';
 import '../../core/responsive.dart';
+import '../../data/local/models/local_models.dart';
 import '../../data/sources/manga_source.dart';
 import '../../repositories/auth_repository.dart';
 import '../../state/providers.dart';
@@ -30,6 +34,10 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   bool _loadingChapters = false;
   String? _error;
   bool _isFavorite = false;
+
+  /// Per-chapter read/resume state + which chapters are downloaded.
+  Map<String, LocalProgress> _progress = {};
+  Set<String> _downloaded = {};
 
   @override
   void initState() {
@@ -87,12 +95,29 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     try {
       final feed = await ref.read(mangaRepositoryProvider).feed(widget.mangaId, lang);
       setState(() => _chapters = feed);
+      await _refreshChapterState();
     } catch (e) {
       setState(() => _error = describeBackendError(e));
     } finally {
       if (mounted) setState(() => _loadingChapters = false);
     }
   }
+
+  /// Reload read-progress + downloaded sets (after reading, marking, deleting).
+  Future<void> _refreshChapterState() async {
+    final progress =
+        await ref.read(mangaRepositoryProvider).progressByChapter(widget.mangaId);
+    final downloaded =
+        await ref.read(downloadRepositoryProvider).downloadedIds(widget.mangaId);
+    if (!mounted) return;
+    setState(() {
+      _progress = progress;
+      _downloaded = downloaded;
+    });
+  }
+
+  bool get _dataSaver =>
+      ref.read(readerSettingsProvider).quality == ReaderQuality.dataSaver;
 
   Future<void> _toggleFavorite() async {
     final lib = ref.read(libraryRepositoryProvider);
@@ -108,26 +133,135 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     }
   }
 
-  Future<void> _downloadChapter(String chapterGlobalId) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final downloads = ref.read(downloadRepositoryProvider);
-    if (await downloads.isDownloaded(chapterGlobalId)) {
-      messenger.showSnackBar(const SnackBar(content: Text('Already downloaded')));
+  // ---- continue / resume ----
+
+  /// The chapter "Continue" should open: an in-progress chapter if any, else
+  /// the first unread, else the first chapter.
+  UChapter? _continueTarget() {
+    if (_chapters.isEmpty) return null;
+    UChapter? inProgress;
+    DateTime? best;
+    for (final c in _chapters) {
+      final p = _progress[c.globalId];
+      if (p != null && !p.read && p.lastPage > 0) {
+        if (best == null || p.updatedAt.isAfter(best)) {
+          best = p.updatedAt;
+          inProgress = c;
+        }
+      }
+    }
+    if (inProgress != null) return inProgress;
+    for (final c in _chapters) {
+      final p = _progress[c.globalId];
+      if (p == null || !p.read) return c;
+    }
+    return _chapters.first;
+  }
+
+  Future<void> _openReader(UChapter c) async {
+    await context.push(
+      '/reader/${Uri.encodeComponent(widget.mangaId)}/${Uri.encodeComponent(c.globalId)}',
+      extra: _chapters,
+    );
+    await _refreshChapterState(); // read state may have changed
+  }
+
+  // ---- downloads ----
+
+  void _enqueue(List<UChapter> chapters) {
+    final pending =
+        chapters.where((c) => !_downloaded.contains(c.globalId)).toList();
+    if (pending.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Already downloaded')));
       return;
     }
-    messenger.showSnackBar(const SnackBar(content: Text('Downloading…')));
-    try {
-      await downloads.download(
-        mangaId: widget.mangaId,
-        chapterId: chapterGlobalId,
-        dataSaver: ref.read(readerSettingsProvider).quality == ReaderQuality.dataSaver,
-      );
-      messenger.showSnackBar(const SnackBar(content: Text('Downloaded for offline')));
-    } catch (e) {
-      messenger.showSnackBar(
-          SnackBar(content: Text('Download failed: ${describeBackendError(e)}')));
+    ref.read(downloadManagerProvider.notifier).enqueue(
+          mangaId: widget.mangaId,
+          dataSaver: _dataSaver,
+          chapters: [
+            for (final c in pending) (chapterId: c.globalId, label: c.label)
+          ],
+        );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('Added ${pending.length} chapter(s) to downloads'),
+      action: SnackBarAction(
+          label: 'View', onPressed: () => context.push('/downloads')),
+    ));
+  }
+
+  Future<void> _deleteDownload(UChapter c) async {
+    await ref.read(downloadRepositoryProvider).delete(c.globalId);
+    await _refreshChapterState();
+  }
+
+  // ---- mark read ----
+
+  Future<void> _setRead(List<UChapter> chapters, bool read) async {
+    await ref.read(readerRepositoryProvider).setChaptersRead(
+          mangaId: widget.mangaId,
+          read: read,
+          chapters: [
+            for (final c in chapters)
+              (chapterId: c.globalId, number: c.number, language: c.language)
+          ],
+        );
+    await _refreshChapterState();
+  }
+
+  /// Download the next [n] chapters starting from where you'd continue reading
+  /// (skips ones already on disk inside [_enqueue]).
+  void _downloadNext(int n) {
+    if (_chapters.isEmpty) return;
+    final target = _continueTarget();
+    var start =
+        target == null ? 0 : _chapters.indexWhere((c) => c.globalId == target.globalId);
+    if (start < 0) start = 0;
+    final end = math.min(start + n, _chapters.length);
+    _enqueue(_chapters.sublist(start, end));
+  }
+
+  void _bulkAction(String value) {
+    switch (value) {
+      case 'dl_all':
+        _enqueue(_chapters);
+      case 'dl_unread':
+        _enqueue(_chapters
+            .where((c) => !(_progress[c.globalId]?.read ?? false))
+            .toList());
+      case 'dl_next_25':
+        _downloadNext(25);
+      case 'dl_next_50':
+        _downloadNext(50);
+      case 'read_all':
+        _setRead(_chapters, true);
+      case 'unread_all':
+        _setRead(_chapters, false);
     }
   }
+
+  /// Download button menu (All / next N / unread).
+  Widget _downloadMenu() => PopupMenuButton<String>(
+        icon: const Icon(Icons.download),
+        tooltip: 'Download',
+        onSelected: _bulkAction,
+        itemBuilder: (_) => [
+          PopupMenuItem(
+              value: 'dl_all', child: Text('Download all (${_chapters.length})')),
+          const PopupMenuItem(value: 'dl_unread', child: Text('Download unread')),
+          const PopupMenuItem(value: 'dl_next_25', child: Text('Download next 25')),
+          const PopupMenuItem(value: 'dl_next_50', child: Text('Download next 50')),
+        ],
+      );
+
+  /// Overflow menu for mark-read actions.
+  Widget _moreMenu() => PopupMenuButton<String>(
+        onSelected: _bulkAction,
+        itemBuilder: (_) => const [
+          PopupMenuItem(value: 'read_all', child: Text('Mark all as read')),
+          PopupMenuItem(value: 'unread_all', child: Text('Mark all as unread')),
+        ],
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -157,6 +291,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                 icon: Icon(_isFavorite ? Icons.bookmark : Icons.bookmark_border),
                 onPressed: _toggleFavorite,
               ),
+              if (_chapters.isNotEmpty) ...[_downloadMenu(), _moreMenu()],
             ],
             flexibleSpace: FlexibleSpaceBar(
               title: Text(m.title, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -177,6 +312,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
               ),
             ),
           ),
+          SliverToBoxAdapter(child: _continueButton()),
           SliverToBoxAdapter(child: _header(m)),
           SliverToBoxAdapter(child: _languageSelector()),
           _chapterList(),
@@ -195,6 +331,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
             icon: Icon(_isFavorite ? Icons.bookmark : Icons.bookmark_border),
             onPressed: _toggleFavorite,
           ),
+          if (_chapters.isNotEmpty) ...[_downloadMenu(), _moreMenu()],
         ],
       ),
       body: Row(
@@ -225,6 +362,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                     icon: Icon(_isFavorite ? Icons.bookmark : Icons.bookmark_border),
                     label: Text(_isFavorite ? 'In library' : 'Add to library'),
                   ),
+                  _continueButton(),
                   _header(m),
                 ],
               ),
@@ -241,6 +379,27 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Big "Continue / Start reading" action. Hidden until chapters are loaded.
+  Widget _continueButton() {
+    final target = _continueTarget();
+    if (target == null) return const SizedBox.shrink();
+    final hasProgress = _progress.values.any((p) => p.read || p.lastPage > 0);
+    final label = hasProgress
+        ? 'Continue · Ch. ${target.number ?? '?'}'
+        : 'Start reading';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          icon: const Icon(Icons.play_arrow),
+          label: Text(label),
+          onPressed: () => _openReader(target),
+        ),
       ),
     );
   }
@@ -347,26 +506,93 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   }
 
   Widget _chapterTile(UChapter c) {
+    final scheme = Theme.of(context).colorScheme;
+    final p = _progress[c.globalId];
+    final isRead = p?.read ?? false;
+    final inProgress = p != null && !p.read && p.lastPage > 0;
+    final downloaded = _downloaded.contains(c.globalId);
+
+    // Live download task for this chapter, if queued/running.
+    final tasks = ref.watch(downloadManagerProvider);
+    DownloadTask? task;
+    for (final t in tasks) {
+      if (t.chapterId == c.globalId &&
+          (t.status == DownloadStatus.downloading ||
+              t.status == DownloadStatus.queued)) {
+        task = t;
+        break;
+      }
+    }
+
+    final (leadIcon, leadColor) = isRead
+        ? (Icons.check_circle, scheme.primary)
+        : inProgress
+            ? (Icons.play_circle_fill, scheme.tertiary)
+            : (Icons.radio_button_unchecked, scheme.onSurfaceVariant);
+
     return ListTile(
       dense: true,
-      title: Text(c.label, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: c.group != null ? Text(c.group!) : null,
+      leading: Icon(leadIcon, color: leadColor, size: 22),
+      title: Text(
+        c.label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: isRead ? scheme.onSurfaceVariant : null,
+        ),
+      ),
+      subtitle: inProgress
+          ? Text('Resume · page ${p.lastPage + 1}')
+          : (c.group != null ? Text(c.group!) : null),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (c.pages > 0) Text('${c.pages}p'),
-          IconButton(
-            icon: const Icon(Icons.download),
-            tooltip: 'Download for offline',
-            onPressed: () => _downloadChapter(c.globalId),
+          if (c.pages > 0)
+            Text('${c.pages}p',
+                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12)),
+          const SizedBox(width: 6),
+          if (task != null)
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  value: task.total > 0 ? task.fraction : null),
+            )
+          else if (downloaded)
+            Icon(Icons.download_done, color: scheme.primary, size: 20),
+          PopupMenuButton<String>(
+            onSelected: (v) => _tileAction(v, c),
+            itemBuilder: (_) => [
+              if (downloaded)
+                const PopupMenuItem(value: 'del_dl', child: Text('Delete download'))
+              else
+                const PopupMenuItem(value: 'dl', child: Text('Download')),
+              PopupMenuItem(
+                  value: 'read',
+                  child: Text(isRead ? 'Mark as unread' : 'Mark as read')),
+              const PopupMenuItem(
+                  value: 'read_prev', child: Text('Mark previous as read')),
+            ],
           ),
         ],
       ),
-      onTap: () => context.push(
-        '/reader/${Uri.encodeComponent(widget.mangaId)}/${Uri.encodeComponent(c.globalId)}',
-        extra: _chapters,
-      ),
+      onTap: () => _openReader(c),
     );
+  }
+
+  void _tileAction(String value, UChapter c) {
+    switch (value) {
+      case 'dl':
+        _enqueue([c]);
+      case 'del_dl':
+        _deleteDownload(c);
+      case 'read':
+        _setRead([c], !(_progress[c.globalId]?.read ?? false));
+      case 'read_prev':
+        final upTo = _chapters.where((x) => x.sortKey <= c.sortKey).toList();
+        _setRead(upTo, true);
+    }
   }
 
   /// Sliver chapter list (phone layout).

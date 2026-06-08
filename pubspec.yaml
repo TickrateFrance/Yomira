@@ -1,7 +1,7 @@
 name: tappreader
 description: Private manga/manhwa reader using the MangaDex public API. No GMS/Firebase.
 publish_to: "none"
-version: 1.2.7+7
+version: 1.3.1+11
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -17,8 +17,14 @@ dependencies:
   # HTTP
   dio: ^5.7.0
 
+  # Open the downloaded APK with the system installer (in-app self-update).
+  open_filex: ^4.5.0
+
   # Image display + disk cache (no GMS)
   cached_network_image: ^3.4.1
+  # Index-based scrolling for the vertical reader (reliable resume-to-page on a
+  # cold open, where pixel offsets aren't known until images load).
+  scrollable_positioned_list: ^0.3.8
   # Direct access to the shared disk cache for chapter prefetching
   flutter_cache_manager: ^3.4.1
 

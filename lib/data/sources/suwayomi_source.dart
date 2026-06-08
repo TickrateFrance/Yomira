@@ -171,7 +171,9 @@ class SuwayomiSource implements MangaSource {
           'type': type,
           'query': query,
           'page': page,
-        }).timeout(const Duration(seconds: 12)); // cap each source independently
+        }).timeout(const Duration(seconds: 35)); // cap each source independently
+        // 35s: Cloudflare first-solve via FlareSolverr/Byparr runs ~20-25s;
+        // banned sites fast-fail, so this doesn't drag the batch.
         final mangas =
             (((data['fetchSourceManga'] as Map?)?['mangas']) as List?) ?? const [];
         return mangas

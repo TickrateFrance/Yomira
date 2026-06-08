@@ -100,4 +100,62 @@ class ReaderRepository {
   Future<LocalProgress?> progressFor(String chapterId) {
     return _db.isar.progress.where().chapterIdEqualTo(chapterId).findFirst();
   }
+
+  /// Mark one or more chapters read/unread from the chapter list WITHOUT
+  /// touching history (you're not actually opening them). Writes locally first
+  /// (instant), then best-effort syncs each to the backend.
+  Future<void> setChaptersRead({
+    required String mangaId,
+    required List<({String chapterId, String? number, String language})> chapters,
+    required bool read,
+  }) async {
+    final now = DateTime.now();
+    await _db.isar.writeTxn(() async {
+      for (final c in chapters) {
+        final existing = await _db.isar.progress
+            .where()
+            .chapterIdEqualTo(c.chapterId)
+            .findFirst();
+        final row = (existing ?? LocalProgress())
+          ..mangaId = mangaId
+          ..chapterId = c.chapterId
+          ..chapterNumber = c.number ?? existing?.chapterNumber
+          ..language = c.language.isNotEmpty ? c.language : existing?.language
+          ..lastPage = read ? (existing?.lastPage ?? 0) : 0
+          ..read = read
+          ..dirty = true
+          ..updatedAt = now;
+        await _db.isar.progress.put(row);
+      }
+    });
+
+    final cached =
+        await _db.isar.cachedManga.where().mangaIdEqualTo(mangaId).findFirst();
+    for (final c in chapters) {
+      try {
+        await _backend.putProgress(ProgressEntry(
+          mangaId: mangaId,
+          chapterId: c.chapterId,
+          lastPage: 0,
+          read: read,
+          chapterNumber: c.number,
+          language: c.language,
+          title: cached?.title,
+          coverUrl: cached?.coverUrl,
+        ));
+        await _db.isar.writeTxn(() async {
+          final s = await _db.isar.progress
+              .where()
+              .chapterIdEqualTo(c.chapterId)
+              .findFirst();
+          if (s != null) {
+            s.dirty = false;
+            await _db.isar.progress.put(s);
+          }
+        });
+      } on DioException {
+        break; // offline — remaining rows stay dirty for a later push
+      }
+    }
+  }
 }

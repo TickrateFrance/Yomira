@@ -30,6 +30,38 @@ class DownloadRepository {
 
   Future<List<DownloadedChapter>> all() => _db.isar.downloads.where().findAll();
 
+  /// globalIds of every downloaded chapter for one manga.
+  Future<Set<String>> downloadedIds(String mangaId) async {
+    final rows =
+        await _db.isar.downloads.filter().mangaIdEqualTo(mangaId).findAll();
+    return rows.map((r) => r.chapterId).toSet();
+  }
+
+  /// Total bytes used by all downloaded pages on disk (best-effort).
+  Future<int> storageBytes() async {
+    final rows = await all();
+    var total = 0;
+    for (final r in rows) {
+      for (final path in r.pagePaths) {
+        try {
+          total += await File(path).length();
+        } catch (_) {
+          // file missing — skip
+        }
+      }
+    }
+    return total;
+  }
+
+  /// Delete every downloaded chapter for one manga.
+  Future<void> deleteForManga(String mangaId) async {
+    final rows =
+        await _db.isar.downloads.filter().mangaIdEqualTo(mangaId).findAll();
+    for (final r in rows) {
+      await delete(r.chapterId);
+    }
+  }
+
   /// Download all pages of [chapterId]. [onProgress] gives (done, total).
   Future<DownloadedChapter> download({
     required String mangaId,

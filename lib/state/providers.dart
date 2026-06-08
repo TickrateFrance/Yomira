@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/api/dio_client.dart';
 import '../core/config.dart';
 import '../core/discord_presence.dart';
+import '../core/download_manager.dart';
 import '../core/background_settings.dart';
 import '../core/reader_settings.dart';
 import '../core/runtime_config.dart';
@@ -22,6 +23,7 @@ import '../repositories/download_repository.dart';
 import '../repositories/library_repository.dart';
 import '../repositories/manga_repository.dart';
 import '../repositories/reader_repository.dart';
+import 'updates_controller.dart';
 
 /// LocalDb is created asynchronously at startup and injected via override.
 final localDbProvider = Provider<LocalDb>((ref) {
@@ -147,6 +149,18 @@ final downloadRepositoryProvider = Provider<DownloadRepository>(
     ref.watch(localDbProvider),
     ref.watch(_imageDioProvider),
   ),
+);
+
+/// Sequential chapter-download queue with live progress.
+final downloadManagerProvider =
+    StateNotifierProvider<DownloadManager, List<DownloadTask>>(
+  (ref) => DownloadManager(ref.watch(downloadRepositoryProvider)),
+);
+
+/// Library "Updates" check (new chapters in followed titles).
+final updatesControllerProvider =
+    StateNotifierProvider<UpdatesController, UpdatesState>(
+  (ref) => UpdatesController(ref.watch(mangaRepositoryProvider)),
 );
 
 // ---- auth state ----

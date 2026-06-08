@@ -1,8 +1,11 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_update.dart';
+import '../../core/config.dart';
 import '../../core/theme.dart';
+import '../../core/updater.dart';
 import '../widgets/app_logo.dart';
 
 /// Wraps the app. Listens to [appUpdate]:
@@ -94,15 +97,7 @@ class ForceUpdateScreen extends StatelessWidget {
                     style: TextStyle(color: AppTheme.muted),
                   ),
                   const SizedBox(height: 28),
-                  FilledButton.icon(
-                    onPressed: url.isEmpty ? null : () => _copyUrl(context, url),
-                    icon: const Icon(Icons.download),
-                    label: const Text('Get the update'),
-                  ),
-                  if (url.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Text(url, style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
-                  ],
+                  _UpdateInstaller(pageUrl: url),
                 ],
               ),
             ),
@@ -148,27 +143,135 @@ class _SoftUpdateCard extends StatelessWidget {
                   style: TextStyle(color: AppTheme.muted),
                 ),
                 const SizedBox(height: 22),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(onPressed: onDismiss, child: const Text('Later')),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      onPressed: url.isEmpty
-                          ? null
-                          : () {
-                              _copyUrl(context, url);
-                              onDismiss();
-                            },
-                      child: const Text('Update'),
-                    ),
-                  ],
+                _UpdateInstaller(pageUrl: url),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                      onPressed: onDismiss, child: const Text('Later')),
                 ),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Downloads the latest installer and launches it, with a progress bar. Falls
+/// back to copying the download link if self-update isn't available or fails.
+class _UpdateInstaller extends StatefulWidget {
+  const _UpdateInstaller({required this.pageUrl});
+
+  /// Human-facing downloads page, used as the copy-link fallback.
+  final String pageUrl;
+
+  @override
+  State<_UpdateInstaller> createState() => _UpdateInstallerState();
+}
+
+class _UpdateInstallerState extends State<_UpdateInstaller> {
+  final _updater = Updater();
+  double _progress = 0;
+  bool _busy = false;
+  bool _launched = false; // Android installer was opened
+  String? _error;
+
+  Future<void> _run() async {
+    final url = AppConfig.directUpdateUrl;
+    // No direct installer for this platform → just give the link.
+    if (url == null || !_updater.supported) {
+      _copyFallback();
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+      _progress = 0;
+    });
+    try {
+      await _updater.downloadAndInstall(
+        url: url,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
+      // Windows: the app has already exited. Android: the installer is open.
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _launched = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = _describeError(e);
+        });
+      }
+    }
+  }
+
+  /// Surface the real reason so failures are diagnosable, not generic.
+  String _describeError(Object e) {
+    if (e is DioException) {
+      final code = e.response?.statusCode;
+      if (code == 401 || code == 403) {
+        return 'Download refused (HTTP $code) - server login failed.';
+      }
+      if (code == 404) return 'Installer not found on server (404).';
+      if (code != null) return 'Download failed (HTTP $code).';
+      return 'Download failed: ${e.type.name}.';
+    }
+    return 'Update failed: $e';
+  }
+
+  void _copyFallback() {
+    if (widget.pageUrl.isNotEmpty) _copyUrl(context, widget.pageUrl);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_busy) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+                value: _progress == 0 ? null : _progress, minHeight: 8),
+          ),
+          const SizedBox(height: 8),
+          Text('Downloading ${(_progress * 100).round()}%',
+              style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+        ],
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FilledButton.icon(
+          onPressed: _run,
+          icon: Icon(_launched ? Icons.open_in_new : Icons.download),
+          label: Text(_launched ? 'Open installer again' : 'Download & install'),
+        ),
+        if (_launched) ...[
+          const SizedBox(height: 8),
+          const Text('Installer opened - follow the prompt to finish.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+        ],
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+          TextButton(
+              onPressed: _copyFallback, child: const Text('Copy download link')),
+        ],
+      ],
     );
   }
 }

@@ -1,14 +1,15 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../../core/config.dart';
 import '../../core/reader_settings.dart';
@@ -55,7 +56,35 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   /// Last time the list scrolled — used to ignore taps that merely stop a fling.
   DateTime _lastScroll = DateTime.fromMillisecondsSinceEpoch(0);
 
-  final _verticalCtrl = ScrollController();
+  /// Accumulated scroll distance since the last bar toggle. We only flip the bar
+  /// once the user has moved past [_chromeThreshold] in one direction, so a tiny
+  /// scroll-up to re-read a line doesn't make the bar flicker on/off.
+  double _scrollAccum = 0;
+  static const double _chromeThreshold = 48;
+
+  /// Remembered aspect ratio (width / height) per page. Once a page has loaded
+  /// we know its real height, so when it later scrolls back into view we reserve
+  /// the exact same slot instead of a fixed placeholder — this is what stops the
+  /// content from "teleporting" when you scroll back up.
+  final Map<int, double> _pageAspect = {};
+
+  /// Public MangaDex cover for Discord presence, resolved once per manga and
+  /// reused across chapter changes so the cover never flips back to the logo.
+  String? _rpcCover;
+
+  // Vertical (webtoon) reader uses index-based scrolling so we can reliably
+  // resume to a page on a cold open, before image heights are known.
+  final ItemScrollController _itemScrollCtrl = ItemScrollController();
+  final ScrollOffsetController _offsetCtrl = ScrollOffsetController();
+  final ItemPositionsListener _itemPositions = ItemPositionsListener.create();
+  // ScrollablePositionedList doesn't bubble ScrollNotifications reliably, so we
+  // observe scrolling through its own offset listener instead.
+  final ScrollOffsetListener _offsetListener = ScrollOffsetListener.create();
+  StreamSubscription<double>? _offsetSub;
+
+  /// Debounce so we don't write progress on every scrolled pixel.
+  Timer? _saveTimer;
+
   late PageController _pageCtrl;
 
   /// Chapter list for next/prev. Starts as whatever was passed in (may be a
@@ -91,10 +120,44 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _chapterId = widget.chapterId;
     _chapters = List.of(widget.chapters);
     _pageCtrl = PageController();
+    // Hide the system bars for the WHOLE reading session and leave them hidden.
+    // The custom top bar is a Stack overlay, so toggling it never resizes the
+    // viewport. Setting this once (instead of on every bar toggle) is what stops
+    // the image from jumping when the bar shows/hides.
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _itemPositions.itemPositions.addListener(_onPositionsChanged);
+    _offsetSub = _offsetListener.changes.listen(_onScrollDelta);
     _init();
     // If we only have a stub (resumed from History) or the current chapter
     // isn't in the passed list, fetch the full list so next/prev work.
     if (_chapters.length <= 1 || _chapterIndex < 0) _loadFeed();
+  }
+
+  /// Vertical reader only: derive the current page from which items are on
+  /// screen and persist it (debounced) so we can resume here next time.
+  void _onPositionsChanged() {
+    if (ref.read(readerSettingsProvider).mode != ReaderMode.verticalContinuous) {
+      return;
+    }
+    final positions = _itemPositions.itemPositions.value;
+    if (positions.isEmpty || _pageCount == 0) return;
+
+    // Top-most item still visible (its trailing edge is below the viewport top).
+    final visible = positions.where((p) => p.itemTrailingEdge > 0);
+    if (visible.isEmpty) return;
+    final topIndex = visible
+        .reduce((a, b) => a.itemLeadingEdge <= b.itemLeadingEdge ? a : b)
+        .index;
+
+    // The footer sits at index == _pageCount; reaching it means "finished".
+    final reachedEnd = positions.any((p) => p.index >= _pageCount);
+    final page = topIndex.clamp(0, (_pageCount - 1).clamp(0, 1 << 30));
+    if (page != _current) setState(() => _current = page);
+
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 500), () {
+      _saveProgress(reachedEnd ? _pageCount - 1 : page, read: reachedEnd);
+    });
   }
 
   /// Background-loads the manga's chapter list (for next/prev navigation).
@@ -117,7 +180,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     // Back to idle presence when leaving the reader.
     ref.read(discordPresenceProvider).browsing();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    _verticalCtrl.dispose();
+    _itemPositions.itemPositions.removeListener(_onPositionsChanged);
+    _offsetSub?.cancel();
+    _saveTimer?.cancel();
     _pageCtrl.dispose();
     super.dispose();
   }
@@ -150,12 +215,31 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       // stores language/number for resume), preserving any "finished" flag.
       _saveProgress(_current, read: progress?.read ?? false);
 
-      // Discord Rich Presence (desktop) — show what's being read.
+      // Discord Rich Presence (desktop) - show what's being read.
       final cached = await ref.read(mangaRepositoryProvider).cached(widget.mangaId);
-      ref.read(discordPresenceProvider).reading(
-            title: cached?.title ?? 'a manga',
+      final presence = ref.read(discordPresenceProvider);
+      final rpcTitle = cached?.title ?? 'a manga';
+      // Pass the already-known cover immediately so changing chapter (same manga)
+      // never flips the art back to the logo.
+      presence.reading(
+        title: rpcTitle,
+        chapter: _currentChapter?.number,
+        coverUrl: _rpcCover,
+      );
+      // Resolve a PUBLIC MangaDex cover once (best-effort) - Suwayomi covers are
+      // auth-gated and Discord's proxy can't load them.
+      final t = cached?.title;
+      if (_rpcCover == null && t != null && t.isNotEmpty) {
+        ref.read(mangadexRatingsProvider).infoFor(t).then((info) {
+          if (!mounted || info?.coverUrl == null) return;
+          _rpcCover = info!.coverUrl;
+          presence.reading(
+            title: rpcTitle,
             chapter: _currentChapter?.number,
+            coverUrl: _rpcCover,
           );
+        });
+      }
 
       // Warm the disk cache for the whole chapter in the background so pages
       // appear instantly as you scroll. Skipped for already-downloaded chapters.
@@ -171,8 +255,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   void _jumpToResume() {
     if (_current <= 0) return;
     final mode = ref.read(readerSettingsProvider).mode;
-    if (mode == ReaderMode.horizontalPaged && _pageCtrl.hasClients) {
-      _pageCtrl.jumpToPage(_current);
+    if (mode == ReaderMode.horizontalPaged) {
+      if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(_current);
+    } else {
+      // Vertical: jump to the saved page by index (heights need not be known).
+      if (_itemScrollCtrl.isAttached) _itemScrollCtrl.jumpTo(index: _current);
     }
   }
 
@@ -233,10 +320,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   void _setChrome(bool show) {
     if (show == _showChrome || !mounted) return;
+    // Only animate the floating overlay bar. The system-UI mode is set ONCE in
+    // initState and never switched here — switching it resizes the viewport and
+    // makes every image jump, which is exactly the glitch we want to avoid.
     setState(() => _showChrome = show);
-    SystemChrome.setEnabledSystemUIMode(
-      show ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
-    );
   }
 
   /// Tap handler: toggle the bar, but ignore taps that occur right after a
@@ -248,23 +335,26 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _setChrome(!_showChrome);
   }
 
-  /// Drive the bar from scroll direction: hide while reading forward (scroll
-  /// down), reveal when scrolling back up. Deterministic — no random pops.
-  bool _onScroll(ScrollNotification n) {
-    if (ref.read(readerSettingsProvider).mode != ReaderMode.verticalContinuous) {
-      return false;
+  /// Drive the bar from scroll direction (vertical reader): hide while reading
+  /// forward (scroll down), reveal when scrolling back up. Fed by the list's
+  /// ScrollOffsetListener. [delta] > 0 = scrolling down, < 0 = scrolling up.
+  void _onScrollDelta(double delta) {
+    if (!mounted ||
+        ref.read(readerSettingsProvider).mode != ReaderMode.verticalContinuous) {
+      return;
     }
-    if (n is ScrollUpdateNotification || n is UserScrollNotification) {
-      _lastScroll = DateTime.now();
+    _lastScroll = DateTime.now();
+    // Reset the tally when the user changes direction so the threshold is
+    // measured fresh each way (not from leftover momentum the other way).
+    if (delta.sign != _scrollAccum.sign) _scrollAccum = 0;
+    _scrollAccum += delta;
+    if (_scrollAccum > _chromeThreshold) {
+      _setChrome(false); // moved down enough → reading → hide
+      _scrollAccum = 0;
+    } else if (_scrollAccum < -_chromeThreshold) {
+      _setChrome(true); // moved up enough → show controls
+      _scrollAccum = 0;
     }
-    if (n is UserScrollNotification) {
-      if (n.direction == ScrollDirection.reverse) {
-        _setChrome(false); // scrolling down → reading → hide
-      } else if (n.direction == ScrollDirection.forward) {
-        _setChrome(true); // scrolling up → show controls
-      }
-    }
-    return false;
   }
 
   /// Switch chapter in-place (reload this screen) — avoids go_router route
@@ -272,7 +362,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   Future<void> _goToChapter(UChapter? c) async {
     if (c == null || c.globalId == _chapterId) return;
     _prefetchCancelled = true; // stop the old chapter's prefetch
-    if (_verticalCtrl.hasClients) _verticalCtrl.jumpTo(0);
+    _saveTimer?.cancel();
+    if (_itemScrollCtrl.isAttached) _itemScrollCtrl.jumpTo(index: 0);
     if (_pageCtrl.hasClients) _pageCtrl.jumpToPage(0);
     setState(() {
       _chapterId = c.globalId;
@@ -299,9 +390,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: NotificationListener<ScrollNotification>(
-                onNotification: _onScroll,
-                child: GestureDetector(
+              child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
                 onTap: _onTapToggle,
                 // Constrain page width on large screens; the black Scaffold
@@ -313,7 +402,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
                     child: _buildBody(settings),
                   ),
                 ),
-              ),
               ),
             ),
             _buildTopBar(settings),
@@ -352,16 +440,26 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         return KeyEventResult.handled;
       }
     } else {
+      // Vertical (webtoon): left/right arrows change chapter (they're unused for
+      // scrolling here). Horizontal keeps them as page turns above.
+      if (key == LogicalKeyboardKey.arrowRight) {
+        _goToChapter(_nextChapter);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        _goToChapter(_prevChapter);
+        return KeyEventResult.handled;
+      }
       final down = key == LogicalKeyboardKey.arrowDown ||
           key == LogicalKeyboardKey.space ||
           key == LogicalKeyboardKey.pageDown;
       final up = key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.pageUp;
-      if ((down || up) && _verticalCtrl.hasClients) {
+      if ((down || up) && _itemScrollCtrl.isAttached) {
         final delta = MediaQuery.sizeOf(context).height * 0.85 * (down ? 1 : -1);
-        final target = (_verticalCtrl.position.pixels + delta)
-            .clamp(0.0, _verticalCtrl.position.maxScrollExtent);
-        _verticalCtrl.animateTo(target,
-            duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+        _offsetCtrl.animateScroll(
+            offset: delta,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut);
         return KeyEventResult.handled;
       }
     }
@@ -551,32 +649,30 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   Widget _verticalReader() {
-    return NotificationListener<ScrollEndNotification>(
-      onNotification: (_) {
-        if (_verticalCtrl.hasClients &&
-            _verticalCtrl.position.pixels >=
-                _verticalCtrl.position.maxScrollExtent - 80) {
-          _saveProgress(_pageCount - 1, read: true);
-        }
-        return false;
+    return ScrollablePositionedList.builder(
+      itemScrollController: _itemScrollCtrl,
+      scrollOffsetController: _offsetCtrl,
+      itemPositionsListener: _itemPositions,
+      scrollOffsetListener: _offsetListener,
+      // Resume: open straight on the saved page. If it's out of range the list
+      // clamps it; 0 means start at the top (also the safe fallback).
+      initialScrollIndex: _current.clamp(0, _pageCount),
+      // Build/keep more offscreen pages so scrolling stays ahead of the eye.
+      minCacheExtent: 2400,
+      itemCount: _pageCount + 1,
+      itemBuilder: (_, i) {
+        if (i == _pageCount) return _endOfChapterFooter();
+        return _PageImage(
+          key: ValueKey('v$i'),
+          index: i,
+          offlinePath: _offline ? _localPaths[i] : null,
+          resolveUrl: _urlFor,
+          fit: BoxFit.fitWidth,
+          headers: ref.watch(suwayomiImageHeadersProvider),
+          aspectRatio: _pageAspect[i],
+          onAspectRatio: (r) => _pageAspect[i] = r,
+        );
       },
-      child: ListView.builder(
-        controller: _verticalCtrl,
-        // Build/keep more offscreen pages so scrolling stays ahead of the eye.
-        cacheExtent: 2400,
-        itemCount: _pageCount + 1,
-        itemBuilder: (_, i) {
-          if (i == _pageCount) return _endOfChapterFooter();
-          return _PageImage(
-            key: ValueKey('v$i'),
-            index: i,
-            offlinePath: _offline ? _localPaths[i] : null,
-            resolveUrl: _urlFor,
-            fit: BoxFit.fitWidth,
-            headers: ref.watch(suwayomiImageHeadersProvider),
-          );
-        },
-      ),
     );
   }
 
@@ -654,6 +750,8 @@ class _PageImage extends StatefulWidget {
     required this.fit,
     required this.headers,
     this.offlinePath,
+    this.aspectRatio,
+    this.onAspectRatio,
   });
 
   final int index;
@@ -662,12 +760,20 @@ class _PageImage extends StatefulWidget {
   final BoxFit fit;
   final Map<String, String> headers;
 
+  /// Known aspect ratio (w/h) for this page, if it has been measured before.
+  /// When set (and [fit] is fitWidth) the slot reserves the matching height.
+  final double? aspectRatio;
+
+  /// Called once with the real aspect ratio after the image first decodes.
+  final void Function(double aspectRatio)? onAspectRatio;
+
   @override
   State<_PageImage> createState() => _PageImageState();
 }
 
 class _PageImageState extends State<_PageImage> {
   late Future<String> _urlFuture;
+  bool _aspectReported = false;
 
   @override
   void initState() {
@@ -678,19 +784,51 @@ class _PageImageState extends State<_PageImage> {
   }
 
   void _refresh() {
-    setState(() => _urlFuture = widget.resolveUrl(widget.index, refresh: true));
+    setState(() {
+      _aspectReported = false;
+      _urlFuture = widget.resolveUrl(widget.index, refresh: true);
+    });
+  }
+
+  /// Read the decoded image's real dimensions (from the in-memory cache, so no
+  /// extra download) and report the aspect ratio up once.
+  void _captureAspect(ImageProvider provider) {
+    if (_aspectReported || widget.onAspectRatio == null) return;
+    final stream = provider.resolve(const ImageConfiguration());
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener((info, _) {
+      stream.removeListener(listener);
+      if (!mounted || _aspectReported) return;
+      _aspectReported = true;
+      final w = info.image.width.toDouble();
+      final h = info.image.height.toDouble();
+      if (h > 0) widget.onAspectRatio!(w / h);
+    });
+    stream.addListener(listener);
+  }
+
+  /// Reserve the known height (for vertical/fitWidth) so the page never resizes
+  /// when it scrolls back into view.
+  Widget _reserve(Widget child) {
+    final ar = widget.aspectRatio;
+    if (ar != null && ar > 0 && widget.fit == BoxFit.fitWidth) {
+      return AspectRatio(aspectRatio: ar, child: child);
+    }
+    return child;
   }
 
   @override
   Widget build(BuildContext context) {
     if (widget.offlinePath != null) {
-      return Image.file(
-        File(widget.offlinePath!),
+      final provider = FileImage(File(widget.offlinePath!));
+      _captureAspect(provider);
+      return _reserve(Image(
+        image: provider,
         fit: widget.fit,
         errorBuilder: (_, __, ___) => _broken(),
-      );
+      ));
     }
-    return FutureBuilder<String>(
+    return _reserve(FutureBuilder<String>(
       future: _urlFuture,
       builder: (context, snap) {
         if (!snap.hasData) {
@@ -703,6 +841,10 @@ class _PageImageState extends State<_PageImage> {
           imageUrl: snap.data!,
           fit: widget.fit,
           httpHeaders: widget.headers,
+          imageBuilder: (context, imageProvider) {
+            _captureAspect(imageProvider);
+            return Image(image: imageProvider, fit: widget.fit);
+          },
           placeholder: (_, __) => const SizedBox(
             height: 320,
             child: Center(child: CircularProgressIndicator()),
@@ -710,7 +852,7 @@ class _PageImageState extends State<_PageImage> {
           errorWidget: (_, __, ___) => _broken(onRetry: _refresh),
         );
       },
-    );
+    ));
   }
 
   Widget _broken({VoidCallback? onRetry}) {

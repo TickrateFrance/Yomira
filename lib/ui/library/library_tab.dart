@@ -111,7 +111,22 @@ class _LibraryTabState extends ConsumerState<LibraryTab> {
         ],
       );
     }
-    return AppBar(title: const Text('Library'), automaticallyImplyLeading: false);
+    return AppBar(
+      title: const Text('Library'),
+      automaticallyImplyLeading: false,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.notifications_active_outlined),
+          tooltip: 'Updates (new chapters)',
+          onPressed: () => context.push('/updates'),
+        ),
+        IconButton(
+          icon: const Icon(Icons.download_for_offline_outlined),
+          tooltip: 'Downloads',
+          onPressed: () => context.push('/downloads'),
+        ),
+      ],
+    );
   }
 
   @override

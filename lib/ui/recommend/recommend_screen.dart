@@ -177,9 +177,17 @@ class _RecommendScreenState extends ConsumerState<RecommendScreen> {
     if (_error != null) return ErrorView(message: _error!, onRetry: _prepare);
 
     final scheme = Theme.of(context).colorScheme;
-    return Column(
-      children: [
-        const SizedBox(height: 12),
+    // Constrain to a centered column on wide/desktop screens. A full-width reel
+    // makes the viewport so wide the spin can't scroll far enough to land the
+    // winner under the marker (maxScrollExtent clamp) — this keeps it correct
+    // and centered. Phones (narrower than the cap) are unaffected.
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
         // ---- the reel ----
         SizedBox(
           height: 188,
@@ -266,7 +274,9 @@ class _RecommendScreenState extends ConsumerState<RecommendScreen> {
             ),
           ),
         ),
-      ],
+          ],
+        ),
+      ),
     );
   }
 

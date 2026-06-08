@@ -16,9 +16,11 @@ Cross-device reading-progress sync. No ads. No tracking. No Google services.
 ---
 
 > ### This repository is the Yomira **app only**
-> It ships **no content, no sources, and no server.** To use it you must run **your
-> own** servers (a Suwayomi-Server and a sync backend) and point the app at them.
-> There are **no public downloads** — build it yourself from the steps below.
+> It ships **no content and no sources**, and runs no server for you. To use it you
+> must run **your own** servers - a Suwayomi-Server plus the sync backend (a
+> ready-to-run template is in [`backend-template/`](backend-template/)) - and point
+> the app at them.
+> There are **no public downloads** - build it yourself from the steps below.
 
 ## Screenshots
 
@@ -34,7 +36,7 @@ Cross-device reading-progress sync. No ads. No tracking. No Google services.
   adjustable page width, hideable bars, image prefetch
 - Smart history with "continue where you left off"
 - Library / favorites
-- Adaptive UI — native on Android, desktop layout on Windows
+- Adaptive UI - native on Android, desktop layout on Windows
 - Built-in update checker
 
 ## Privacy
@@ -58,7 +60,7 @@ Yomira is a **client**. It connects to two services you run yourself:
 
 Nothing works until both are up and the app's `.env` points at them.
 
-### 1. Content server — Suwayomi-Server
+### 1. Content server - Suwayomi-Server
 
 Run a [Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server) (Docker):
 
@@ -74,10 +76,11 @@ by it. Protect it with HTTP Basic Auth if it's exposed to the internet.
 
 ### 2. Sync backend (accounts + reading progress)
 
-The app stores accounts and reading progress on a small backend (the reference
-setup is Node/Express + PostgreSQL). **The backend is not included in this
-repository — you provide your own.** It must expose these HTTPS endpoints that the
-app calls:
+The app stores accounts and reading progress on a small backend (Node/Express +
+PostgreSQL). **A ready-to-run blank template ships in
+[`backend-template/`](backend-template/)** - copy it, set your secrets in `.env`,
+then `docker compose up --build`. It exposes these HTTPS endpoints that the app
+calls:
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -94,7 +97,7 @@ Auth is a Bearer JWT issued at login and stored in the device secure store.
 ### 3. HTTPS
 
 Put both services behind a reverse proxy (e.g. **Caddy**) so the app talks
-HTTPS only — cleartext is disabled in release builds. A common layout is one
+HTTPS only - cleartext is disabled in release builds. A common layout is one
 host with the backend and Suwayomi on separate ports, each with a TLS cert.
 
 ### 4. Point the app at your servers
@@ -134,13 +137,13 @@ flutter build windows --release      # Windows
 ## Tech
 
 Flutter · Riverpod · go_router · dio · Isar (local DB) · cached_network_image ·
-flutter_secure_storage (JWT in the Android Keystore — no GMS). Content is served
+flutter_secure_storage (JWT in the Android Keystore - no GMS). Content is served
 by a self-hosted [Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server)
 you run and configure.
 
 ## Disclaimer
 
-Yomira is a **simple Suwayomi client for Android and Windows** — nothing more. The
+Yomira is a **simple Suwayomi client for Android and Windows** - nothing more. The
 **software hosts and bundles no content, no sources, and no copyrighted material**;
 it only displays whatever a Suwayomi-Server the user runs and configures provides.
 

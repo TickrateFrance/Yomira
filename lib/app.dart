@@ -10,10 +10,12 @@ import 'ui/update/update_gate.dart';
 import 'ui/widgets/app_background.dart';
 import 'ui/auth/login_screen.dart';
 import 'ui/detail/detail_screen.dart';
+import 'ui/downloads/downloads_screen.dart';
 import 'ui/history/history_tab.dart';
 import 'ui/home_shell.dart';
 import 'ui/library/library_tab.dart';
 import 'ui/profile/profile_screen.dart';
+import 'ui/updates/updates_screen.dart';
 import 'ui/reader/reader_screen.dart';
 import 'ui/recommend/recommend_screen.dart';
 import 'ui/search/search_tab.dart';
@@ -92,6 +94,8 @@ class _TAppReaderAppState extends ConsumerState<TAppReaderApp> {
           ],
         ),
         GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
+        GoRoute(path: '/downloads', builder: (_, __) => const DownloadsScreen()),
+        GoRoute(path: '/updates', builder: (_, __) => const UpdatesScreen()),
         GoRoute(
           // :id is a URL-encoded globalId ("mangadex:uuid" / "comick:hid").
           path: '/manga/:id',

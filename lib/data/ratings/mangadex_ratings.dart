@@ -1,12 +1,18 @@
 import 'package:dio/dio.dart';
 
+import '../../core/config.dart';
+
 /// Canonical manga info from the public MangaDex API, matched by title:
 /// rating, original language (for content type) and genres. Read-only, cached.
 class MdInfo {
-  MdInfo({this.rating, this.originalLanguage, this.genres = const []});
+  MdInfo({this.rating, this.originalLanguage, this.genres = const [], this.coverUrl});
 
   /// 0–10 rating, or null.
   final double? rating;
+
+  /// Public MangaDex cover thumbnail URL, or null. Safe to show anywhere
+  /// (no auth) - used for the Discord Rich Presence cover art.
+  final String? coverUrl;
 
   /// MangaDex originalLanguage: "ja" (manga), "ko" (manhwa), "zh"/"zh-hk" (manhua)…
   final String? originalLanguage;
@@ -48,6 +54,7 @@ class MangaDexRatings {
         'title': title,
         'limit': 1,
         'order[relevance]': 'desc',
+        'includes[]': 'cover_art',
       });
       final data = ((search.data as Map)['data'] as List?) ?? const [];
       if (data.isEmpty) return _cache[key] = null;
@@ -56,6 +63,18 @@ class MangaDexRatings {
       final id = manga['id'] as String;
       final attr = (manga['attributes'] as Map?)?.cast<String, dynamic>() ?? {};
       final lang = attr['originalLanguage'] as String?;
+
+      // Public cover thumbnail (from the cover_art relationship).
+      String? coverUrl;
+      for (final rel in (manga['relationships'] as List?) ?? const []) {
+        final rm = (rel as Map).cast<String, dynamic>();
+        if (rm['type'] != 'cover_art') continue;
+        final fn = ((rm['attributes'] as Map?)?['fileName']) as String?;
+        if (fn != null && fn.isNotEmpty) {
+          coverUrl = '${AppConfig.mangadexUploadsBase}/covers/$id/$fn.512.jpg';
+        }
+        break;
+      }
 
       final genres = <String>[];
       for (final t in (attr['tags'] as List?) ?? const []) {
@@ -74,7 +93,8 @@ class MangaDexRatings {
         if (v is num && v > 0) rating = v.toDouble();
       } catch (_) {}
 
-      return _cache[key] = MdInfo(rating: rating, originalLanguage: lang, genres: genres);
+      return _cache[key] =
+          MdInfo(rating: rating, originalLanguage: lang, genres: genres, coverUrl: coverUrl);
     } catch (_) {
       return _cache[key] = null;
     }

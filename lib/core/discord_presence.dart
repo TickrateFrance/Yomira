@@ -15,7 +15,18 @@ class DiscordPresence {
 
   final String _appId;
   bool _ready = false;
-  final DateTime _start = DateTime.now();
+  DateTime _start = DateTime.now();
+
+  /// Context key (what's being shown) so the elapsed timer resets when you
+  /// switch chapter or go from reading to browsing, but NOT on every repeated
+  /// browsing() call (those fire on each tab switch).
+  String? _ctxKey;
+  void _maybeResetTimer(String key) {
+    if (key != _ctxKey) {
+      _start = DateTime.now();
+      _ctxKey = key;
+    }
+  }
 
   int _handle = -1; // Windows pipe handle (INVALID_HANDLE_VALUE = -1)
   Socket? _sock; // Unix socket (Linux/macOS)
@@ -46,12 +57,39 @@ class DiscordPresence {
     }
   }
 
-  void reading({required String title, String? chapter}) =>
-      _activity(details: 'Reading $title', state: chapter != null ? 'Chapter $chapter' : null);
+  /// [coverUrl] must be a PUBLIC https image (Discord's proxy can't auth), e.g.
+  /// a MangaDex cover. When present it's the big image with the logo as a badge.
+  void reading({required String title, String? chapter, String? source, String? coverUrl}) {
+    _maybeResetTimer('r:$title:$chapter');
+    // Source name intentionally omitted from presence (avoid exposing where
+    // scans come from).
+    final state = chapter != null ? 'Chapter $chapter' : null;
+    final cover = (coverUrl != null && coverUrl.startsWith('http')) ? coverUrl : null;
+    _activity(
+      details: 'Reading $title',
+      state: state,
+      largeImage: cover ?? 'logo',
+      largeText: title,
+      // When large is an external URL, Discord won't render an asset-key small
+      // image, so use the public logo URL for the corner bubble.
+      smallImage: cover != null ? 'https://yomira.eu/assets/logo.png' : null,
+      smallText: cover != null ? 'Yomira' : null,
+    );
+  }
 
-  void browsing() => _activity(details: 'Browsing the app');
+  void browsing() {
+    _maybeResetTimer('b');
+    _activity(details: 'Browsing the library');
+  }
 
-  void _activity({required String details, String? state}) {
+  void _activity({
+    required String details,
+    String? state,
+    String largeImage = 'logo',
+    String largeText = 'Yomira',
+    String? smallImage,
+    String? smallText,
+  }) {
     if (!_ready) return;
     _send(1, {
       'cmd': 'SET_ACTIVITY',
@@ -61,7 +99,15 @@ class DiscordPresence {
           'details': details,
           if (state != null) 'state': state,
           'timestamps': {'start': _start.millisecondsSinceEpoch},
-          'assets': {'large_image': 'logo', 'large_text': 'Yomira'},
+          'assets': {
+            'large_image': largeImage,
+            'large_text': largeText,
+            if (smallImage != null) 'small_image': smallImage,
+            if (smallText != null) 'small_text': smallText,
+          },
+          'buttons': [
+            {'label': 'Get Yomira', 'url': 'https://yomira.eu'},
+          ],
         },
       },
       'nonce': DateTime.now().microsecondsSinceEpoch.toString(),

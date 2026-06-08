@@ -261,6 +261,18 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('Open details'),
+              subtitle: Text(it.cached?.sourceName != null
+                  ? 'View on ${it.cached!.sourceName}'
+                  : 'View this title\'s page'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await context.push('/manga/${Uri.encodeComponent(id)}');
+                if (mounted) _refresh();
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.swap_horiz),
               title: const Text('Read from another source'),
               subtitle: const Text('Resume at the same chapter elsewhere'),
