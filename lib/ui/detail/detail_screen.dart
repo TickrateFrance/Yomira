@@ -233,6 +233,8 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         _downloadNext(25);
       case 'dl_next_50':
         _downloadNext(50);
+      case 'dl_range':
+        _downloadRangeDialog();
       case 'read_all':
         _setRead(_chapters, true);
       case 'unread_all':
@@ -251,8 +253,68 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
           const PopupMenuItem(value: 'dl_unread', child: Text('Download unread')),
           const PopupMenuItem(value: 'dl_next_25', child: Text('Download next 25')),
           const PopupMenuItem(value: 'dl_next_50', child: Text('Download next 50')),
+          const PopupMenuItem(value: 'dl_range', child: Text('Download range...')),
         ],
       );
+
+  /// Ask for a chapter range (by chapter number, inclusive) and enqueue it.
+  Future<void> _downloadRangeDialog() async {
+    final fromCtrl = TextEditingController();
+    final toCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Download range'),
+        content: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: fromCtrl,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'From ch.', hintText: 'e.g. 10'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: toCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'To ch.', hintText: 'e.g. 50'),
+                onSubmitted: (_) => Navigator.pop(ctx, true),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Download')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    final from = double.tryParse(fromCtrl.text.trim().replaceAll(',', '.'));
+    final to = double.tryParse(toCtrl.text.trim().replaceAll(',', '.'));
+    if (from == null || to == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter valid chapter numbers')));
+      return;
+    }
+    final lo = math.min(from, to);
+    final hi = math.max(from, to);
+    // Match by chapter number so it works whatever order the feed uses.
+    final sel = _chapters.where((c) {
+      final n = double.tryParse(c.number ?? '');
+      return n != null && n >= lo && n <= hi;
+    }).toList();
+    if (sel.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No chapters in that range')));
+      return;
+    }
+    _enqueue(sel);
+  }
 
   /// Overflow menu for mark-read actions.
   Widget _moreMenu() => PopupMenuButton<String>(

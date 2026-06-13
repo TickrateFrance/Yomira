@@ -106,6 +106,10 @@ class MangaRepository {
     return _db.isar.cachedManga.where().mangaIdEqualTo(globalId).findFirst();
   }
 
+  /// Every locally-known progress row (for profile reading stats).
+  Future<List<LocalProgress>> allProgress() =>
+      _db.isar.progress.where().findAll();
+
   /// Reading summary for a manga: how many chapters marked read and the
   /// highest chapter number reached. Used by the History list.
   Future<ProgressSummary> progressSummary(String globalId) async {

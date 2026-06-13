@@ -13,6 +13,7 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../../core/config.dart';
 import '../../core/reader_settings.dart';
+import '../../data/local/reading_time_store.dart';
 import '../../data/sources/manga_source.dart';
 import '../../repositories/auth_repository.dart';
 import '../../state/providers.dart';
@@ -40,7 +41,8 @@ class ReaderScreen extends ConsumerStatefulWidget {
   ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
 }
 
-class _ReaderScreenState extends ConsumerState<ReaderScreen> {
+class _ReaderScreenState extends ConsumerState<ReaderScreen>
+    with WidgetsBindingObserver {
   bool _loading = true;
   String? _error;
   int _pageCount = 0;
@@ -125,6 +127,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     // viewport. Setting this once (instead of on every bar toggle) is what stops
     // the image from jumping when the bar shows/hides.
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // Reading-time stats: clock runs while the reader is open and foregrounded.
+    WidgetsBinding.instance.addObserver(this);
+    _readClock.start();
     _itemPositions.itemPositions.addListener(_onPositionsChanged);
     _offsetSub = _offsetListener.changes.listen(_onScrollDelta);
     _init();
@@ -174,8 +179,30 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  /// Accumulates time spent reading (paused while the app is backgrounded).
+  final Stopwatch _readClock = Stopwatch();
+
+  /// Persist the accumulated reading time to the per-day store and reset.
+  void _flushReadingTime() {
+    final secs = _readClock.elapsed.inSeconds;
+    _readClock.reset();
+    if (secs > 0) ReadingTimeStore().add(DateTime.now(), secs);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _flushReadingTime();
+      _readClock.stop();
+    } else if (state == AppLifecycleState.resumed) {
+      _readClock.start();
+    }
+  }
+
   @override
   void dispose() {
+    _flushReadingTime();
+    WidgetsBinding.instance.removeObserver(this);
     _prefetchCancelled = true;
     // Back to idle presence when leaving the reader.
     ref.read(discordPresenceProvider).browsing();

@@ -145,7 +145,7 @@ class SuwayomiSource implements MangaSource {
     mutation Fetch($source: LongString!, $type: FetchSourceMangaType!, $query: String, $page: Int!) {
       fetchSourceManga(input: { source: $source, type: $type, query: $query, page: $page }) {
         hasNextPage
-        mangas { id title thumbnailUrl status latestUploadedChapter { uploadDate } }
+        mangas { id title thumbnailUrl status genre latestUploadedChapter { uploadDate } }
       }
     }
   ''';
@@ -156,6 +156,7 @@ class SuwayomiSource implements MangaSource {
     List<String>? languages,
     int page = 1,
     List<String>? sourceIds,
+    void Function(List<UManga>)? onPartial,
   }) async {
     var sources = await _sourcesFor(languages);
     // Restrict to the picked sources when given — this is the big speed-up
@@ -164,6 +165,9 @@ class SuwayomiSource implements MangaSource {
       final keep = sourceIds.toSet();
       sources = sources.where((s) => keep.contains(s.id)).toList();
     }
+    // Stream results out as each extension answers: fast sources render right
+    // away instead of waiting up to 35s for a slow Cloudflare-protected one.
+    final acc = <UManga>[];
     final results = await Future.wait(sources.map((s) async {
       try {
         final data = await _gql(_fetchSourceMangaMutation, {
@@ -176,10 +180,15 @@ class SuwayomiSource implements MangaSource {
         // banned sites fast-fail, so this doesn't drag the batch.
         final mangas =
             (((data['fetchSourceManga'] as Map?)?['mangas']) as List?) ?? const [];
-        return mangas
+        final list = mangas
             .map((m) => _toUManga((m as Map).cast<String, dynamic>(),
                 lang: s.lang, sourceName: s.name))
             .toList();
+        if (onPartial != null && list.isNotEmpty) {
+          acc.addAll(list);
+          onPartial(List.of(acc));
+        }
+        return list;
       } catch (_) {
         // Slow/broken/timed-out source contributes nothing; others still return.
         return <UManga>[];
@@ -195,22 +204,44 @@ class SuwayomiSource implements MangaSource {
     List<String>? status,
     int page = 1,
     List<String>? sourceIds,
+    void Function(List<UManga>)? onPartial,
   }) {
     return _fetchAcrossSources(
-        type: 'SEARCH', query: title, languages: languages, page: page, sourceIds: sourceIds);
+        type: 'SEARCH',
+        query: title,
+        languages: languages,
+        page: page,
+        sourceIds: sourceIds,
+        onPartial: onPartial);
   }
 
   @override
-  Future<List<UManga>> popular({List<String>? languages, int page = 1, List<String>? sourceIds}) {
+  Future<List<UManga>> popular(
+      {List<String>? languages,
+      int page = 1,
+      List<String>? sourceIds,
+      void Function(List<UManga>)? onPartial}) {
     return _fetchAcrossSources(
-        type: 'POPULAR', languages: languages, page: page, sourceIds: sourceIds);
+        type: 'POPULAR',
+        languages: languages,
+        page: page,
+        sourceIds: sourceIds,
+        onPartial: onPartial);
   }
 
   @override
-  Future<List<UManga>> latest({List<String>? languages, int page = 1, List<String>? sourceIds}) {
+  Future<List<UManga>> latest(
+      {List<String>? languages,
+      int page = 1,
+      List<String>? sourceIds,
+      void Function(List<UManga>)? onPartial}) {
     // Sources that don't support LATEST just error and contribute nothing.
     return _fetchAcrossSources(
-        type: 'LATEST', languages: languages, page: page, sourceIds: sourceIds);
+        type: 'LATEST',
+        languages: languages,
+        page: page,
+        sourceIds: sourceIds,
+        onPartial: onPartial);
   }
 
   @override

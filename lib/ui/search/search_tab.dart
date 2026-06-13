@@ -28,6 +28,25 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   final Set<String> _selectedStatus = {};
   String? _selectedLang;
 
+  /// Client-side tag/genre filter (lowercase). Tags come with the results
+  /// (Suwayomi `genre`), so toggling filters instantly without a re-query.
+  final Set<String> _selectedTags = {};
+
+  /// Every tag seen in any result this session — feeds the "tag=" type-ahead
+  /// and the filter sheet even before the current query returns.
+  final Set<String> _seenTags = {};
+
+  /// MangaDex as tag oracle: normalized titles of MangaDex's matches for the
+  /// selected tags. A local result passes the tag filter when its own genres
+  /// match OR its title is in this set (covers sources that send no genres).
+  /// Only the user's own sources are ever displayed.
+  Set<String> _mdMatch = const {};
+  bool _mdLoading = false;
+  String _mdSig = '';
+
+  /// Pages auto-loaded from the sources while the tag filter finds nothing.
+  int _autoLoads = 0;
+
   bool _loading = false;
   String? _error;
   List<UManga> _results = const [];
@@ -52,11 +71,25 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   @override
   void initState() {
     super.initState();
+    // Rebuild while typing so the "tag=" type-ahead row follows the input.
+    _ctrl.addListener(() {
+      if (mounted) setState(() {});
+    });
     // Landing suggestions.
     _loadPopular();
     _loadSources();
+    _loadMangadexTags();
     // Desktop "R" refresh shortcut (Search = tab index 1).
     ref.read(tabRefreshProvider).register(1, _refreshTab);
+  }
+
+  /// Seed the tag sheet + "tag=" type-ahead with MangaDex's full tag catalog
+  /// (genres, themes, formats) so every tag is offered, not just the ones seen
+  /// in results. Best-effort: silently skipped when offline.
+  Future<void> _loadMangadexTags() async {
+    final tags = await ref.read(mangadexRatingsProvider).allTags();
+    if (!mounted || tags.isEmpty) return;
+    setState(() => _seenTags.addAll(tags));
   }
 
   /// Load the underlying source list for the desktop picker.
@@ -106,13 +139,79 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   }
 
   void _search() {
-    final title = _ctrl.text.trim();
+    // Pull "tag=X" / "genre=X" fragments out of the query into the tag filter.
+    final cleaned = _applyQueryFilters(_ctrl.text);
+    if (cleaned != _ctrl.text) {
+      _ctrl.value = TextEditingValue(
+          text: cleaned,
+          selection: TextSelection.collapsed(offset: cleaned.length));
+    }
+    final title = cleaned.trim();
     if (title.isEmpty && _selectedStatus.isEmpty) {
       _loadPopular();
       return;
     }
     _showingPopular = false;
     _run(reset: true);
+  }
+
+  /// Extracts comma-separated `tag=X` / `genre=X` tokens from [raw] into
+  /// [_selectedTags]; returns what remains as the title query.
+  /// Example: "solo leveling, tag=action, genre=fantasy" -> "solo leveling".
+  String _applyQueryFilters(String raw) {
+    final title = <String>[];
+    for (final part in raw.split(',')) {
+      final m = RegExp(r'^\s*(?:tag|genre)\s*=\s*(.+)$', caseSensitive: false)
+          .firstMatch(part);
+      if (m != null) {
+        final v = m.group(1)!.trim().toLowerCase();
+        if (v.isNotEmpty) _selectedTags.add(v);
+      } else if (part.trim().isNotEmpty) {
+        title.add(part.trim());
+      }
+    }
+    return title.join(' ');
+  }
+
+  /// The `tag=`/`genre=` fragment currently being typed at the end of the
+  /// query (lowercase, may be empty right after the '='), or null.
+  String? get _typingTagFragment {
+    final m = RegExp(r'(?:^|,)\s*(?:tag|genre)\s*=\s*([^,]*)$', caseSensitive: false)
+        .firstMatch(_ctrl.text);
+    return m?.group(1)?.trim().toLowerCase();
+  }
+
+  /// Type-ahead suggestions for the fragment being typed.
+  List<String> get _tagSuggestions {
+    final frag = _typingTagFragment;
+    if (frag == null) return const [];
+    final all = {..._seenTags, ..._availableTags};
+    final hits = [
+      for (final t in all)
+        if (t.contains(frag) && !_selectedTags.contains(t)) t
+    ]..sort();
+    return hits.take(12).toList();
+  }
+
+  /// Apply a type-ahead suggestion: select the tag and strip the fragment.
+  void _completeTag(String tag) {
+    setState(() {
+      _selectedTags.add(tag);
+      final cleaned = _ctrl.text.replaceFirst(
+          RegExp(r'(?:^|,)\s*(?:tag|genre)\s*=\s*[^,]*$', caseSensitive: false), '');
+      _ctrl.value = TextEditingValue(
+          text: cleaned,
+          selection: TextSelection.collapsed(offset: cleaned.length));
+    });
+  }
+
+  void _rememberTags(List<UManga> list) {
+    for (final m in list) {
+      for (final t in m.tags) {
+        final k = t.trim().toLowerCase();
+        if (k.isNotEmpty) _seenTags.add(k);
+      }
+    }
   }
 
   /// Dispatches a paged fetch for the current mode (suggestions vs. search).
@@ -169,6 +268,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
       await _fetch(page, (list) {
         if (!mounted || token != _loadToken) return;
         pageAccum = list;
+        _rememberTags(list);
         setState(() {
           _results = [...base, ...list];
           if (reset && list.isNotEmpty) _loading = false;
@@ -275,38 +375,144 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   }
 
   Widget _filters() {
-    return SizedBox(
-      height: 46,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        children: [
-          for (final s in _statuses)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: FilterChip(
-                label: Text(s),
-                selected: _selectedStatus.contains(s),
-                onSelected: (v) => setState(() {
-                  v ? _selectedStatus.add(s) : _selectedStatus.remove(s);
-                  _search();
-                }),
+    final suggestions = _tagSuggestions;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Type-ahead while the user writes "tag=..." / "genre=..." in the bar.
+        if (suggestions.isNotEmpty)
+          SizedBox(
+            height: 46,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              children: [
+                for (final t in suggestions)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: InputChip(
+                      avatar: const Icon(Icons.add, size: 16),
+                      label: Text(t),
+                      onPressed: () => _completeTag(t),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        SizedBox(
+          height: 46,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            children: [
+              // All tags live behind this button (cleaner than a chip wall).
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Badge.count(
+                  count: _selectedTags.length,
+                  isLabelVisible: _selectedTags.isNotEmpty,
+                  child: ActionChip(
+                    avatar: const Icon(Icons.filter_list, size: 18),
+                    label: const Text('Tags'),
+                    onPressed: _openTagSheet,
+                  ),
+                ),
+              ),
+              for (final s in _statuses)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: Text(s),
+                    selected: _selectedStatus.contains(s),
+                    onSelected: (v) => setState(() {
+                      v ? _selectedStatus.add(s) : _selectedStatus.remove(s);
+                      _search();
+                    }),
+                  ),
+                ),
+              const SizedBox(width: 4),
+              for (final entry in _languages.entries)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(entry.value),
+                    selected: _selectedLang == entry.key,
+                    onSelected: (v) {
+                      setState(() => _selectedLang = v ? entry.key : null);
+                      _showingPopular ? _loadPopular() : _search();
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Bottom sheet with every known tag as a toggle (works phone + desktop).
+  void _openTagSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          final tags = ({..._seenTags, ..._availableTags}.toList())..sort();
+          void toggle(String t, bool v) {
+            setSheet(() {});
+            setState(() => v ? _selectedTags.add(t) : _selectedTags.remove(t));
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text('Filter by tag',
+                          style: Theme.of(ctx).textTheme.titleMedium),
+                      const Spacer(),
+                      if (_selectedTags.isNotEmpty)
+                        TextButton(
+                          onPressed: () {
+                            setSheet(() {});
+                            setState(_selectedTags.clear);
+                          },
+                          child: const Text('Clear'),
+                        ),
+                    ],
+                  ),
+                  if (tags.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Text('No tags yet - run a search or browse first.'),
+                    )
+                  else
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final t in tags)
+                              FilterChip(
+                                label: Text(t),
+                                selected: _selectedTags.contains(t),
+                                onSelected: (v) => toggle(t, v),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
-          const SizedBox(width: 4),
-          for (final entry in _languages.entries)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
-                label: Text(entry.value),
-                selected: _selectedLang == entry.key,
-                onSelected: (v) {
-                  setState(() => _selectedLang = v ? entry.key : null);
-                  _showingPopular ? _loadPopular() : _search();
-                },
-              ),
-            ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -336,7 +542,36 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     );
   }
 
+  /// Tags present in the current results, frequency-ranked (top 24).
+  List<String> get _availableTags {
+    final counts = <String, int>{};
+    for (final m in _results) {
+      for (final t in m.tags) {
+        final k = t.trim().toLowerCase();
+        if (k.isEmpty) continue;
+        counts[k] = (counts[k] ?? 0) + 1;
+      }
+    }
+    final sorted = counts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return [for (final e in sorted.take(24)) e.key];
+  }
+
+  /// Results after the tag filter: a title passes if its own genres carry
+  /// every selected tag, or if MangaDex lists it under those tags (oracle for
+  /// sources that don't send genres).
+  List<UManga> get _tagFiltered => _selectedTags.isEmpty
+      ? _results
+      : _results.where((m) {
+          final tags = {for (final t in m.tags) t.toLowerCase()};
+          if (_selectedTags.every(tags.contains)) return true;
+          return _mdMatch.contains(_normTitle(m.title));
+        }).toList();
+
   Widget _buildBody() {
+    // Keep the MangaDex tag oracle in sync with the selected tags (sig-guarded,
+    // so this is a no-op unless the selection actually changed).
+    _ensureMdTagSearch();
     if (_loading) return _searchLoading();
     if (_error != null) {
       return ErrorView(message: _error!, onRetry: _showingPopular ? _loadPopular : _search);
@@ -348,14 +583,72 @@ class _SearchTabState extends ConsumerState<SearchTab> {
               message: 'Search a manga or manhwa across all your sources',
               icon: Icons.auto_stories);
     }
+    if (_tagFiltered.isEmpty) {
+      // Wait for the MangaDex tag oracle before declaring "nothing".
+      if (_mdLoading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      // Then dig deeper into the sources' own catalogs (a few pages max -
+      // there is no "whole catalog" endpoint; browse feeds are paginated).
+      if (_hasMore && _autoLoads < 3 && !_loadingMore && !_loading) {
+        _autoLoads++;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _run(reset: false);
+        });
+      }
+      if (_loadingMore || _loading) {
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                'Looking deeper in your sources...',
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 13),
+              ),
+            ],
+          ),
+        );
+      }
+      return const EmptyView(
+          message: 'No results match the selected tags.', icon: Icons.filter_alt_off);
+    }
     // Both browse and search: grouped-by-title cards → source picker on tap.
     return _resultsGrid();
   }
 
+  /// Refresh the MangaDex tag oracle for the current tag selection. Display
+  /// stays sources-only; MangaDex just tells us which titles carry the tags.
+  void _ensureMdTagSearch() {
+    final sig = (_selectedTags.toList()..sort()).join(',');
+    if (sig == _mdSig) return;
+    _mdSig = sig;
+    _autoLoads = 0;
+    if (_selectedTags.isEmpty) {
+      _mdMatch = const {};
+      _mdLoading = false;
+      return;
+    }
+    _mdLoading = true;
+    ref.read(mangadexRatingsProvider).searchByTags(_selectedTags, limit: 100).then((hits) {
+      if (!mounted || _mdSig != sig) return;
+      setState(() {
+        _mdMatch = {for (final h in hits) _normTitle(h.title)};
+        _mdLoading = false;
+      });
+    });
+  }
+
+  String _normTitle(String t) =>
+      t.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+
   /// Grouped by title (one card per series, listing how many sources have it).
   /// Responsive grid of overlay cards. Used for browse + search.
   Widget _resultsGrid() {
-    final groups = _groupByTitle(_results);
+    final groups = _groupByTitle(_tagFiltered);
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -456,8 +749,9 @@ class _SearchTabState extends ConsumerState<SearchTab> {
 
   // ===================== Desktop split-pane layout =====================
 
-  // Results already reflect the selected sources (we query only those).
-  List<UManga> _visibleItems() => _results;
+  // Results already reflect the selected sources (we query only those);
+  // the tag filter is applied client-side on top.
+  List<UManga> _visibleItems() => _tagFiltered;
 
   Widget _desktopLayout(BuildContext context) {
     return SafeArea(

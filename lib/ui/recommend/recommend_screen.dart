@@ -84,41 +84,77 @@ class _RecommendScreenState extends ConsumerState<RecommendScreen> {
   List<UManga> _randomReel() =>
       [for (var i = 0; i < _reelLen; i++) _pool[_rng.nextInt(_pool.length)]];
 
-  /// Tags from recent history (cached), to bias the recommendation.
-  Future<Set<String>> _historyTags() async {
+  String _norm(String t) =>
+      t.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+
+  /// Taste profile from cached metadata: tag -> weight. Recent history counts
+  /// more than old history; library favorites are the strongest signal. Also
+  /// returns the normalized titles the user already knows (to skip them).
+  Future<(Map<String, double>, Set<String>)> _tasteProfile() async {
     final lib = ref.read(libraryRepositoryProvider);
     final repo = ref.read(mangaRepositoryProvider);
-    final rows = await lib.localHistory(limit: 20);
-    final tags = <String>{};
-    for (final h in rows) {
-      final c = await repo.cached(h.mangaId);
-      if (c != null) tags.addAll(c.tags.map((t) => t.toLowerCase()));
+    final weights = <String, double>{};
+    final known = <String>{};
+
+    final rows = await lib.localHistory(limit: 50);
+    for (var i = 0; i < rows.length; i++) {
+      final c = await repo.cached(rows[i].mangaId);
+      if (c == null) continue;
+      known.add(_norm(c.title));
+      // Newest entry weighs ~2.0, oldest ~1.0.
+      final w = 1.0 + (rows.length - i) / rows.length;
+      for (final t in c.tags) {
+        final k = t.toLowerCase();
+        weights[k] = (weights[k] ?? 0) + w;
+      }
     }
-    return tags;
+    for (final row in (await lib.localLibrary()).where((e) => e.present)) {
+      final c = await repo.cached(row.mangaId);
+      if (c == null) continue;
+      known.add(_norm(c.title));
+      for (final t in c.tags) {
+        final k = t.toLowerCase();
+        weights[k] = (weights[k] ?? 0) + 2.0;
+      }
+    }
+    return (weights, known);
   }
 
-  /// Choose the winner: random if no history tags; otherwise sample a few
-  /// candidates, fetch their tags, and pick the one with the most overlap.
+  /// Choose the winner: prefer titles the user hasn't read, scored by the
+  /// weighted overlap between their tags and the taste profile.
   Future<UManga> _pickWinner() async {
-    final histTags = await _historyTags();
-    if (histTags.isEmpty) return _pool[_rng.nextInt(_pool.length)];
+    final (weights, known) = await _tasteProfile();
+
+    // Skip what's already in history/library (unless that empties the pool).
+    var candidates = _pool.where((m) => !known.contains(_norm(m.title))).toList();
+    if (candidates.isEmpty) candidates = _pool;
+    if (weights.isEmpty) return candidates[_rng.nextInt(candidates.length)];
 
     final repo = ref.read(mangaRepositoryProvider);
-    final sample = (_pool.toList()..shuffle(_rng)).take(12).toList();
+    final sample = (candidates.toList()..shuffle(_rng)).take(16).toList();
     UManga best = sample.first;
-    var bestScore = -1;
+    var bestScore = -1.0;
     await Future.wait(sample.map((m) async {
       try {
-        final d = await repo.detail(m.globalId).timeout(const Duration(seconds: 8));
-        final score = d.tags.where((t) => histTags.contains(t.toLowerCase())).length;
+        // Tags may already be on the search result (genre now fetched);
+        // fall back to a detail fetch when they're missing.
+        var tags = m.tags;
+        if (tags.isEmpty) {
+          final d = await repo.detail(m.globalId).timeout(const Duration(seconds: 8));
+          tags = d.tags;
+        }
+        var score = 0.0;
+        for (final t in tags) {
+          score += weights[t.toLowerCase()] ?? 0;
+        }
         if (score > bestScore) {
           bestScore = score;
           best = m;
         }
       } catch (_) {}
     }));
-    // No overlap found anywhere → fall back to random.
-    return bestScore > 0 ? best : _pool[_rng.nextInt(_pool.length)];
+    // No overlap found anywhere -> fall back to random unknown title.
+    return bestScore > 0 ? best : candidates[_rng.nextInt(candidates.length)];
   }
 
   Future<void> _spin() async {

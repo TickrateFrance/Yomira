@@ -129,11 +129,24 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
                     EmptyView(message: 'No reading history yet.', icon: Icons.history),
                   ]);
                 }
-                return ListView.separated(
-                  itemCount: items.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                // Group by day: insert a header row whenever the day changes
+                // (items already arrive sorted newest-first).
+                final rows = <Object>[];
+                String? lastLabel;
+                for (final it in items) {
+                  final label = _dayLabel(it.history.lastReadAt);
+                  if (label != lastLabel) {
+                    rows.add(label);
+                    lastLabel = label;
+                  }
+                  rows.add(it);
+                }
+                return ListView.builder(
+                  itemCount: rows.length,
                   itemBuilder: (_, i) {
-                    final it = items[i];
+                    final row = rows[i];
+                    if (row is String) return _dayHeader(row);
+                    final it = row as _Item;
                     final id = it.history.mangaId;
                     final selected = _selected.contains(id);
                     return ListTile(
@@ -442,6 +455,38 @@ class _HistoryTabState extends ConsumerState<HistoryTab> {
     if (d.inMinutes < 60) return '${d.inMinutes}m ago';
     if (d.inHours < 24) return '${d.inHours}h ago';
     return '${d.inDays}d ago';
+  }
+
+  /// Section header label for a history day bucket.
+  String _dayLabel(DateTime t) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(t.year, t.month, t.day);
+    final diff = today.difference(day).inDays;
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
+    const weekdays = [
+      'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+    ];
+    if (diff < 7) return weekdays[day.weekday - 1];
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${day.day} ${months[day.month - 1]} ${day.year}';
+  }
+
+  Widget _dayHeader(String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
+      child: Text(
+        label,
+        style: Theme.of(context)
+            .textTheme
+            .titleSmall
+            ?.copyWith(color: Theme.of(context).colorScheme.primary),
+      ),
+    );
   }
 
   String _progressLabel(ProgressSummary s, String? source) {

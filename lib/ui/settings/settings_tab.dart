@@ -257,7 +257,14 @@ class SettingsTab extends ConsumerWidget {
   /// set it as the background (survives restarts).
   Future<void> _pickBackgroundImage(WidgetRef ref, BuildContext context) async {
     try {
-      final res = await FilePicker.platform.pickFiles(type: FileType.image);
+      // compressionQuality 0 = take the file as-is. The plugin's default (30)
+      // re-compresses via a Java background thread that crashes with
+      // "createTempFile: Permission denied" on some Android ROMs (EMUI) - an
+      // uncatchable native crash that killed the app on pick.
+      final res = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        compressionQuality: 0,
+      );
       final files = res?.files;
       if (files == null || files.isEmpty) return; // cancelled
       final src = files.first.path;

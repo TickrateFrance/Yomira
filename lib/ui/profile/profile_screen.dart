@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/local/models/local_models.dart';
+import '../../data/local/reading_time_store.dart';
 import '../../data/ratings/mangadex_ratings.dart';
 import '../../repositories/manga_repository.dart';
 import '../../state/providers.dart';
@@ -49,7 +50,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           lastReadAt: h.lastReadAt));
     }
     final username = ref.read(authControllerProvider.notifier).username;
-    return _ProfileData(username: username, favorites: favorites, history: history);
+    final progressRows = await repo.allProgress();
+    final timeByDay = await ReadingTimeStore().all();
+    return _ProfileData(
+        username: username,
+        favorites: favorites,
+        history: history,
+        progressRows: progressRows,
+        timeByDay: timeByDay);
   }
 
   Future<void> _sync() async {
@@ -180,14 +188,147 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   Widget _stats(BuildContext context, _ProfileData data) {
     final read = data.history.fold<int>(0, (sum, i) => sum + (i.summary?.readCount ?? 0));
+    final totalSecs = data.timeByDay.values.fold<int>(0, (s, v) => s + v);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-      child: Row(
+      child: Column(
         children: [
-          _stat(context, '${data.favorites.length}', 'In library'),
-          _stat(context, '${data.history.length}', 'In history'),
-          _stat(context, '$read', 'Chapters read'),
+          Row(
+            children: [
+              _stat(context, '${data.favorites.length}', 'In library'),
+              _stat(context, '${data.history.length}', 'In history'),
+              _stat(context, '$read', 'Chapters read'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _stat(context, _fmtDuration(totalSecs), 'Reading time'),
+              _stat(context, '${_streak(data)}', 'Day streak'),
+              _stat(context, '${_chaptersThisWeek(data)}', 'This week'),
+            ],
+          ),
         ],
+      ),
+    );
+  }
+
+  /// "Xh Ym" / "Ym" total reading time.
+  String _fmtDuration(int seconds) {
+    final h = seconds ~/ 3600;
+    final m = (seconds % 3600) ~/ 60;
+    if (h > 0) return '${h}h ${m}m';
+    return '${m}m';
+  }
+
+  /// Days with any reading activity (progress updates or tracked time).
+  Set<DateTime> _activeDays(_ProfileData data) {
+    final days = <DateTime>{};
+    for (final p in data.progressRows) {
+      final t = p.updatedAt;
+      days.add(DateTime(t.year, t.month, t.day));
+    }
+    for (final k in data.timeByDay.keys) {
+      final t = DateTime.tryParse(k);
+      if (t != null) days.add(DateTime(t.year, t.month, t.day));
+    }
+    for (final h in data.history) {
+      final t = h.lastReadAt;
+      if (t != null) days.add(DateTime(t.year, t.month, t.day));
+    }
+    return days;
+  }
+
+  /// Consecutive reading days ending today (or yesterday, so an unfinished
+  /// today doesn't zero the streak).
+  int _streak(_ProfileData data) {
+    final days = _activeDays(data);
+    final now = DateTime.now();
+    var d = DateTime(now.year, now.month, now.day);
+    if (!days.contains(d)) {
+      d = d.subtract(const Duration(days: 1));
+      if (!days.contains(d)) return 0;
+    }
+    var n = 0;
+    while (days.contains(d)) {
+      n++;
+      d = d.subtract(const Duration(days: 1));
+    }
+    return n;
+  }
+
+  /// Chapters marked read in the current week (since Monday).
+  int _chaptersThisWeek(_ProfileData data) {
+    final now = DateTime.now();
+    final monday = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: now.weekday - 1));
+    return data.progressRows
+        .where((p) => p.read && !p.updatedAt.isBefore(monday))
+        .length;
+  }
+
+  /// Chapters read per week for the last 8 weeks (oldest first).
+  List<int> _weeklyCounts(_ProfileData data) {
+    final now = DateTime.now();
+    final thisMonday = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: now.weekday - 1));
+    final counts = List<int>.filled(8, 0);
+    for (final p in data.progressRows) {
+      if (!p.read) continue;
+      final t = p.updatedAt;
+      final monday =
+          DateTime(t.year, t.month, t.day).subtract(Duration(days: t.weekday - 1));
+      final weeksAgo = thisMonday.difference(monday).inDays ~/ 7;
+      if (weeksAgo >= 0 && weeksAgo < 8) counts[7 - weeksAgo]++;
+    }
+    return counts;
+  }
+
+  /// Bar chart card: chapters read per week, last 8 weeks. Pure widgets, no
+  /// chart dependency.
+  Widget _weeklyCard(BuildContext context, _ProfileData data) {
+    final scheme = Theme.of(context).colorScheme;
+    final counts = _weeklyCounts(data);
+    final maxV = counts.fold<int>(0, max);
+    if (maxV == 0) return const SizedBox.shrink();
+    return _statCard(
+      context,
+      'Chapters per week',
+      SizedBox(
+        height: 120,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            for (var i = 0; i < counts.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (counts[i] > 0)
+                      Text('${counts[i]}',
+                          style: TextStyle(
+                              fontSize: 11, color: scheme.onSurfaceVariant)),
+                    const SizedBox(height: 4),
+                    Container(
+                      height: counts[i] == 0 ? 3 : 64.0 * counts[i] / maxV + 4,
+                      decoration: BoxDecoration(
+                        color: i == counts.length - 1
+                            ? scheme.primary
+                            : scheme.primary.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(i == counts.length - 1 ? 'now' : '-${counts.length - 1 - i}w',
+                        style: TextStyle(
+                            fontSize: 10, color: scheme.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -230,6 +371,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final genres = _topGenres(infos);
     final types = _types(infos);
     final cards = <Widget>[];
+    cards.add(_weeklyCard(context, data));
     if (types.isNotEmpty) cards.add(_typeCard(context, types));
     if (genres.isNotEmpty) cards.add(_genreCard(context, genres));
     return cards;
@@ -482,10 +624,22 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 }
 
 class _ProfileData {
-  _ProfileData({required this.username, required this.favorites, required this.history});
+  _ProfileData({
+    required this.username,
+    required this.favorites,
+    required this.history,
+    this.progressRows = const [],
+    this.timeByDay = const {},
+  });
   final String? username;
   final List<_Item> favorites;
   final List<_Item> history;
+
+  /// Every local progress row (read flags + updatedAt) for stats.
+  final List<LocalProgress> progressRows;
+
+  /// yyyy-MM-dd -> seconds spent reading that day.
+  final Map<String, int> timeByDay;
 }
 
 class _Item {

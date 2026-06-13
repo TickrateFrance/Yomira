@@ -75,8 +75,13 @@ class SourceRegistry {
     // Rank merged results by how well each title matches the query, so the best
     // match surfaces at the top instead of being buried among other sources.
     return _progressive(
-      (s) => s.search(
-          title: title, languages: languages, status: status, page: page, sourceIds: sourceIds),
+      (s, partial) => s.search(
+          title: title,
+          languages: languages,
+          status: status,
+          page: page,
+          sourceIds: sourceIds,
+          onPartial: partial),
       (list) => onUpdate(_rankByRelevance(list, title)),
     );
   }
@@ -118,7 +123,9 @@ class SourceRegistry {
     required void Function(List<UManga>) onUpdate,
   }) {
     return _progressive(
-        (s) => s.popular(languages: languages, page: page, sourceIds: sourceIds), onUpdate);
+        (s, partial) => s.popular(
+            languages: languages, page: page, sourceIds: sourceIds, onPartial: partial),
+        onUpdate);
   }
 
   /// Latest-updated titles across the source(s).
@@ -129,7 +136,9 @@ class SourceRegistry {
     required void Function(List<UManga>) onUpdate,
   }) {
     return _progressive(
-        (s) => s.latest(languages: languages, page: page, sourceIds: sourceIds), onUpdate);
+        (s, partial) => s.latest(
+            languages: languages, page: page, sourceIds: sourceIds, onPartial: partial),
+        onUpdate);
   }
 
   /// "Suggestions" for the Search landing view: popular across the source(s).
@@ -144,19 +153,28 @@ class SourceRegistry {
   }
 
   Future<void> _progressive(
-    Future<List<UManga>> Function(MangaSource) work,
+    Future<List<UManga>> Function(
+            MangaSource, void Function(List<UManga>) partial)
+        work,
     void Function(List<UManga>) onUpdate,
   ) async {
-    final acc = <UManga>[];
+    // Per-provider slices so streamed inner-source partials merge correctly.
+    final per = <MangaSource, List<UManga>>{};
+    void emit() => onUpdate([for (final l in per.values) ...l]);
     await Future.wait(all.map((s) async {
       try {
-        final r = await work(s).timeout(const Duration(seconds: 45));
-        acc.addAll(r);
+        final r = await work(s, (list) {
+          // A provider's inner source answered (e.g. one Suwayomi extension):
+          // show what we have instead of waiting for the slowest extension.
+          per[s] = list;
+          emit();
+        }).timeout(const Duration(seconds: 45));
+        per[s] = r;
       } catch (_) {
         // timeout / source error → contribute nothing
       }
       // Emit accumulated results so far (also clears the spinner on first done).
-      onUpdate(List.of(acc));
+      emit();
     }));
   }
 

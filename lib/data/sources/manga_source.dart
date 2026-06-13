@@ -115,12 +115,16 @@ abstract class MangaSource {
   /// those languages (server-side when supported). [page] is 1-based.
   /// [sourceIds] (optional) restricts the query to those underlying sources —
   /// far faster than hitting every source.
+  /// [onPartial] (optional): providers that fan out to many inner sources emit
+  /// the accumulated results as each inner source completes, so the UI can
+  /// render fast sources immediately instead of waiting for the slowest one.
   Future<List<UManga>> search({
     required String title,
     List<String>? languages,
     List<String>? status,
     int page = 1,
     List<String>? sourceIds,
+    void Function(List<UManga>)? onPartial,
   });
 
   /// Default discovery list (most-followed / popular). [page] is 1-based.
@@ -128,6 +132,7 @@ abstract class MangaSource {
     List<String>? languages,
     int page = 1,
     List<String>? sourceIds,
+    void Function(List<UManga>)? onPartial,
   });
 
   /// Latest updates (most recently updated titles). [page] is 1-based.
@@ -135,6 +140,7 @@ abstract class MangaSource {
     List<String>? languages,
     int page = 1,
     List<String>? sourceIds,
+    void Function(List<UManga>)? onPartial,
   });
 
   /// The underlying sources available (for a source picker). [languages]
